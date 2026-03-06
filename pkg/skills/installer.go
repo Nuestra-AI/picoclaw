@@ -7,11 +7,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
+
+const maxSkillFileSize int64 = 5 << 20 // 5 MB — SKILL.md files should never approach this
+
+var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`)
 
 type SkillInstaller struct {
 	workspace string
@@ -24,6 +29,10 @@ func NewSkillInstaller(workspace string) *SkillInstaller {
 }
 
 func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) error {
+	if !repoPattern.MatchString(repo) {
+		return fmt.Errorf("invalid repository format %q: must be 'owner/repo'", repo)
+	}
+
 	skillDir := filepath.Join(si.workspace, "skills", filepath.Base(repo))
 
 	if _, err := os.Stat(skillDir); err == nil {
@@ -48,7 +57,7 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 		return fmt.Errorf("failed to fetch skill: HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSkillFileSize))
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
 	}

@@ -2,16 +2,19 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
+
+const maxWriteSize = 20 * 1024 * 1024 // 20 MB — limit for file writes via the write tool
 
 // validatePath ensures the given path is within the workspace if restrict is true.
 func validatePath(path, workspace string, restrict bool) (string, error) {
@@ -178,6 +181,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 		return ErrorResult("content is required")
 	}
 
+	if len(content) > maxWriteSize {
+		return ErrorResult(fmt.Sprintf("content too large: %d bytes exceeds %d byte limit", len(content), maxWriteSize))
+	}
+
 	if err := t.fs.WriteFile(path, []byte(content)); err != nil {
 		return ErrorResult(err.Error())
 	}
@@ -334,7 +341,11 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 
 		// Use atomic write pattern with explicit sync for flash storage reliability.
 		// Using 0o600 (owner read/write only) for secure default permissions.
-		tmpRelPath := fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())
+		randBytes := make([]byte, 8)
+		if _, err := rand.Read(randBytes); err != nil {
+			return fmt.Errorf("failed to generate random bytes for temp file: %w", err)
+		}
+		tmpRelPath := fmt.Sprintf(".tmp-%s", hex.EncodeToString(randBytes))
 
 		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {

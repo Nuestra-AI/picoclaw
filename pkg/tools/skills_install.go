@@ -159,10 +159,13 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *To
 		_ = err
 	}
 
-	// Build result with moderation warning if suspicious.
+	// Build result with moderation warnings.
 	var output string
+	if !result.MetadataAvailable {
+		output += fmt.Sprintf("Warning: safety metadata was not available for skill %q. Exercise caution.\n\n", slug)
+	}
 	if result.IsSuspicious {
-		output = fmt.Sprintf("⚠️ Warning: skill %q is flagged as suspicious (may contain risky patterns).\n\n", slug)
+		output += fmt.Sprintf("⚠️ Warning: skill %q is flagged as suspicious (may contain risky patterns).\n\n", slug)
 	}
 	output += fmt.Sprintf("Successfully installed skill %q v%s from %s registry.\nLocation: %s\n",
 		slug, result.Version, registry.Name(), targetDir)

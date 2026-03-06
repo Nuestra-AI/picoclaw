@@ -14,13 +14,18 @@ import (
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal"
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-func agentCmd(message, sessionKey, model string, debug bool) error {
+func agentCmd(message, sessionKey, model string, debug bool,
+	workspace, configDir, toolsFlag, skillsFlag string,
+) error {
 	if sessionKey == "" {
-		sessionKey = "cli:default"
+		sessionKey = "agent:main:cli:default"
+	} else if !strings.HasPrefix(sessionKey, "agent:") {
+		sessionKey = "agent:main:cli:" + sessionKey
 	}
 
 	if debug {
@@ -33,8 +38,42 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 		return fmt.Errorf("error loading config: %w", err)
 	}
 
+	// Apply workspace-local config overrides from config-dir
+	if configDir != "" {
+		wc, wcErr := config.LoadWorkspaceConfig(configDir)
+		if wcErr != nil {
+			return fmt.Errorf("error loading workspace config from %s: %w", configDir, wcErr)
+		}
+		cfg.MergeWorkspaceConfig(wc)
+	}
+
+	// CLI flags win over workspace config
 	if model != "" {
 		cfg.Agents.Defaults.ModelName = model
+	}
+
+	// Workspace override
+	if workspace != "" {
+		cfg.Agents.Defaults.Workspace = workspace
+		os.MkdirAll(workspace, 0o755)
+	}
+
+	// Tool allowlist: disable all tools, then enable only the listed ones
+	if toolsFlag != "" {
+		toolList := strings.Split(toolsFlag, ",")
+		for i := range toolList {
+			toolList[i] = strings.TrimSpace(toolList[i])
+		}
+		applyToolAllowlist(cfg, toolList)
+	}
+
+	// Skills filter: inject into agent config so NewAgentInstance picks it up
+	if skillsFlag != "" {
+		skillList := strings.Split(skillsFlag, ",")
+		for i := range skillList {
+			skillList[i] = strings.TrimSpace(skillList[i])
+		}
+		applySkillsFilter(cfg, skillList)
 	}
 
 	provider, modelID, err := providers.CreateProvider(cfg)
@@ -50,6 +89,11 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 	msgBus := bus.NewMessageBus()
 	defer msgBus.Close()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+
+	// Copy bootstrap files from config-dir to workspace
+	if configDir != "" {
+		copyBootstrapFiles(configDir, cfg.Agents.Defaults.Workspace)
+	}
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
@@ -74,6 +118,65 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 	interactiveMode(agentLoop, sessionKey)
 
 	return nil
+}
+
+// applyToolAllowlist disables all tools, then enables only the listed ones.
+func applyToolAllowlist(cfg *config.Config, allowed []string) {
+	allowSet := make(map[string]bool, len(allowed))
+	for _, t := range allowed {
+		allowSet[t] = true
+	}
+
+	cfg.Tools.ReadFile.Enabled = allowSet["read_file"]
+	cfg.Tools.WriteFile.Enabled = allowSet["write_file"]
+	cfg.Tools.EditFile.Enabled = allowSet["edit_file"]
+	cfg.Tools.AppendFile.Enabled = allowSet["append_file"]
+	cfg.Tools.ListDir.Enabled = allowSet["list_dir"]
+	cfg.Tools.Exec.Enabled = allowSet["exec"]
+	cfg.Tools.Spawn.Enabled = allowSet["spawn"]
+	cfg.Tools.Cron.Enabled = allowSet["cron"]
+	cfg.Tools.Web.Enabled = allowSet["web"] || allowSet["web_search"]
+	cfg.Tools.WebFetch.Enabled = allowSet["web_fetch"]
+	cfg.Tools.Skills.Enabled = allowSet["skills"]
+	cfg.Tools.FindSkills.Enabled = allowSet["find_skills"]
+	cfg.Tools.InstallSkill.Enabled = allowSet["install_skill"]
+	cfg.Tools.Subagent.Enabled = allowSet["subagent"]
+	cfg.Tools.Message.Enabled = allowSet["message"]
+	cfg.Tools.MCP.Enabled = allowSet["mcp"]
+	cfg.Tools.I2C.Enabled = allowSet["i2c"]
+	cfg.Tools.SPI.Enabled = allowSet["spi"]
+}
+
+// applySkillsFilter injects a skills filter into the agent config.
+func applySkillsFilter(cfg *config.Config, skills []string) {
+	if len(cfg.Agents.List) == 0 {
+		// Create an implicit main agent with skills filter
+		cfg.Agents.List = []config.AgentConfig{
+			{ID: "main", Default: true, Skills: skills},
+		}
+	} else {
+		// Apply to all agents
+		for i := range cfg.Agents.List {
+			cfg.Agents.List[i].Skills = skills
+		}
+	}
+}
+
+// copyBootstrapFiles copies recognized bootstrap files (AGENTS.md, IDENTITY.md,
+// SOUL.md, USER.md) from srcDir into the workspace directory.
+func copyBootstrapFiles(srcDir, workspace string) {
+	bootstrapFiles := []string{"AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md"}
+	for _, filename := range bootstrapFiles {
+		srcPath := filepath.Join(srcDir, filename)
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			continue // file not present in config-dir, skip
+		}
+		dstPath := filepath.Join(workspace, filename)
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write %s: %v\n", dstPath, err)
+		}
+	}
 }
 
 func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {

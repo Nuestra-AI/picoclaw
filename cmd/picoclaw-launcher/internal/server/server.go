@@ -32,7 +32,8 @@ func RegisterConfigAPI(mux *http.ServeMux, absPath string) {
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		cfg, err := config.LoadConfig(absPath)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+			log.Printf("Failed to load config: %v", err)
+			http.Error(w, "Failed to load config", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -63,7 +64,8 @@ func RegisterConfigAPI(mux *http.ServeMux, absPath string) {
 		}
 
 		if err := config.SaveConfig(absPath, &cfg); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+			log.Printf("Failed to save config: %v", err)
+			http.Error(w, "Failed to save config", http.StatusInternalServerError)
 			return
 		}
 
@@ -77,7 +79,8 @@ func RegisterAuthAPI(mux *http.ServeMux, absPath string) {
 	mux.HandleFunc("GET /api/auth/status", func(w http.ResponseWriter, r *http.Request) {
 		store, err := auth.LoadStore()
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to load auth store: %v", err), http.StatusInternalServerError)
+			log.Printf("Failed to load auth store: %v", err)
+			http.Error(w, "Failed to load auth store", http.StatusInternalServerError)
 			return
 		}
 
@@ -193,4 +196,15 @@ func RegisterAuthAPI(mux *http.ServeMux, absPath string) {
 
 	// GET /auth/callback — OAuth browser callback for Google Antigravity
 	mux.HandleFunc("GET /auth/callback", handleOAuthCallback)
+}
+
+// SecurityHeaders wraps an http.Handler to add standard security headers.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().
+			Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		next.ServeHTTP(w, r)
+	})
 }
