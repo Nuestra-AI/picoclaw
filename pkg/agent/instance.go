@@ -98,6 +98,7 @@ func NewAgentInstance(
 
 	contextBuilder := NewContextBuilder(workspace)
 
+	// SkillsFilter will be applied after we know the agent config
 	agentID := routing.DefaultAgentID
 	agentName := ""
 	var subagents *config.SubagentsConfig
@@ -108,6 +109,11 @@ func NewAgentInstance(
 		agentName = agentCfg.Name
 		subagents = agentCfg.Subagents
 		skillsFilter = agentCfg.Skills
+	}
+
+	// Apply skills filter to context builder so only matching skills appear in the prompt
+	if len(skillsFilter) > 0 {
+		contextBuilder.SetSkillsFilter(skillsFilter)
 	}
 
 	maxIter := defaults.MaxToolIterations

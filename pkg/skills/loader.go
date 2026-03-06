@@ -191,14 +191,18 @@ func (sl *SkillsLoader) LoadSkillsForContext(skillNames []string) string {
 }
 
 func (sl *SkillsLoader) BuildSkillsSummary() string {
-	allSkills := sl.ListSkills()
-	if len(allSkills) == 0 {
+	return FormatSkillsSummary(sl.ListSkills())
+}
+
+// FormatSkillsSummary renders a list of SkillInfo entries as an XML summary.
+func FormatSkillsSummary(skillList []SkillInfo) string {
+	if len(skillList) == 0 {
 		return ""
 	}
 
 	var lines []string
 	lines = append(lines, "<skills>")
-	for _, s := range allSkills {
+	for _, s := range skillList {
 		escapedName := escapeXML(s.Name)
 		escapedDesc := escapeXML(s.Description)
 		escapedPath := escapeXML(s.Path)
