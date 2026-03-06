@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/utils"
@@ -31,12 +33,24 @@ type ClawHubRegistry struct {
 	client          *http.Client
 }
 
+const defaultRegistryURL = "https://clawhub.ai"
+
 // NewClawHubRegistry creates a new ClawHub registry client from config.
 func NewClawHubRegistry(cfg ClawHubConfig) *ClawHubRegistry {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = "https://clawhub.ai"
+		baseURL = defaultRegistryURL
 	}
+
+	// Validate base URL: require https unless targeting localhost.
+	if parsedURL, err := url.Parse(baseURL); err != nil || parsedURL.Host == "" {
+		slog.Warn("invalid clawhub base_url, falling back to default", "url", baseURL)
+		baseURL = defaultRegistryURL
+	} else if parsedURL.Scheme != "https" && !strings.HasPrefix(parsedURL.Host, "localhost") && !strings.HasPrefix(parsedURL.Host, "127.0.0.1") {
+		slog.Warn("clawhub base_url must use https (unless localhost), falling back to default", "url", baseURL)
+		baseURL = defaultRegistryURL
+	}
+
 	searchPath := cfg.SearchPath
 	if searchPath == "" {
 		searchPath = "/api/v1/search"
