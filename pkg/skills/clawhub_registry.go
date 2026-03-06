@@ -248,6 +248,7 @@ func (c *ClawHubRegistry) DownloadAndInstall(
 		result.IsMalwareBlocked = meta.IsMalwareBlocked
 		result.IsSuspicious = meta.IsSuspicious
 		result.Summary = meta.Summary
+		result.MetadataAvailable = true
 	}
 
 	// Step 2: Resolve version.
