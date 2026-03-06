@@ -13,6 +13,8 @@ import (
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
 
+const maxWriteSize = 20 * 1024 * 1024 // 20 MB — limit for file writes via the write tool
+
 // validatePath ensures the given path is within the workspace if restrict is true.
 func validatePath(path, workspace string, restrict bool) (string, error) {
 	if workspace == "" {
@@ -176,6 +178,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	content, ok := args["content"].(string)
 	if !ok {
 		return ErrorResult("content is required")
+	}
+
+	if len(content) > maxWriteSize {
+		return ErrorResult(fmt.Sprintf("content too large: %d bytes exceeds %d byte limit", len(content), maxWriteSize))
 	}
 
 	if err := t.fs.WriteFile(path, []byte(content)); err != nil {
