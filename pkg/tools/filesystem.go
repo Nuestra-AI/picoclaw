@@ -2,13 +2,14 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
@@ -340,7 +341,11 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 
 		// Use atomic write pattern with explicit sync for flash storage reliability.
 		// Using 0o600 (owner read/write only) for secure default permissions.
-		tmpRelPath := fmt.Sprintf(".tmp-%d-%d", os.Getpid(), time.Now().UnixNano())
+		randBytes := make([]byte, 8)
+		if _, err := rand.Read(randBytes); err != nil {
+			return fmt.Errorf("failed to generate random bytes for temp file: %w", err)
+		}
+		tmpRelPath := fmt.Sprintf(".tmp-%s", hex.EncodeToString(randBytes))
 
 		tmpFile, err := root.OpenFile(tmpRelPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
