@@ -96,9 +96,37 @@ func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string
 	}
 }
 
+// builtinSkillNames returns the set of validated skill names from the builtin directory.
+func (sl *SkillsLoader) builtinSkillNames() map[string]bool {
+	names := make(map[string]bool)
+	if sl.builtinSkills == "" {
+		return names
+	}
+	dirs, err := os.ReadDir(sl.builtinSkills)
+	if err != nil {
+		return names
+	}
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		skillFile := filepath.Join(sl.builtinSkills, d.Name(), "SKILL.md")
+		if _, err := os.Stat(skillFile); err != nil {
+			continue
+		}
+		name := d.Name()
+		if metadata := sl.getSkillMetadata(skillFile); metadata != nil && metadata.Name != "" {
+			name = metadata.Name
+		}
+		names[name] = true
+	}
+	return names
+}
+
 func (sl *SkillsLoader) ListSkills() []SkillInfo {
 	skills := make([]SkillInfo, 0)
 	seen := make(map[string]bool)
+	builtinNames := sl.builtinSkillNames()
 
 	addSkills := func(dir, source string) {
 		if dir == "" {
@@ -133,6 +161,12 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 			if seen[info.Name] {
 				continue
 			}
+			// Block workspace/global skills from shadowing builtins.
+			if source != "builtin" && builtinNames[info.Name] {
+				slog.Warn("skill shadows a builtin and will be skipped",
+					"name", info.Name, "source", source)
+				continue
+			}
 			seen[info.Name] = true
 			skills = append(skills, info)
 		}
@@ -147,7 +181,15 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 }
 
 func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
-	// 1. load from workspace skills first (project-level)
+	// If this is a builtin skill, always load from builtin to prevent shadowing.
+	if sl.builtinSkills != "" {
+		skillFile := filepath.Join(sl.builtinSkills, name, "SKILL.md")
+		if content, err := os.ReadFile(skillFile); err == nil {
+			return sl.stripFrontmatter(string(content)), true
+		}
+	}
+
+	// 1. load from workspace skills (project-level)
 	if sl.workspaceSkills != "" {
 		skillFile := filepath.Join(sl.workspaceSkills, name, "SKILL.md")
 		if content, err := os.ReadFile(skillFile); err == nil {
@@ -158,14 +200,6 @@ func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	// 2. then load from global skills (~/.picoclaw/skills)
 	if sl.globalSkills != "" {
 		skillFile := filepath.Join(sl.globalSkills, name, "SKILL.md")
-		if content, err := os.ReadFile(skillFile); err == nil {
-			return sl.stripFrontmatter(string(content)), true
-		}
-	}
-
-	// 3. finally load from builtin skills
-	if sl.builtinSkills != "" {
-		skillFile := filepath.Join(sl.builtinSkills, name, "SKILL.md")
 		if content, err := os.ReadFile(skillFile); err == nil {
 			return sl.stripFrontmatter(string(content)), true
 		}
