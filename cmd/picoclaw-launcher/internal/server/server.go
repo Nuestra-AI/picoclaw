@@ -197,3 +197,13 @@ func RegisterAuthAPI(mux *http.ServeMux, absPath string) {
 	// GET /auth/callback — OAuth browser callback for Google Antigravity
 	mux.HandleFunc("GET /auth/callback", handleOAuthCallback)
 }
+
+// SecurityHeaders wraps an http.Handler to add standard security headers.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		next.ServeHTTP(w, r)
+	})
+}
