@@ -972,17 +972,32 @@ func (al *AgentLoop) runLLMIteration(
 	iteration := 0
 	var finalContent string
 
-	// Resolve effective provider — workspace config overrides win
+	// Resolve effective provider/model — workspace config overrides win
 	effProvider := agent.Provider
+	effModel := agent.Model
 	if opts.effProvider != nil {
 		effProvider = opts.effProvider
+	}
+	if opts.effModel != "" {
+		effModel = opts.effModel
 	}
 
 	// Determine effective model tier for this conversation turn.
 	// selectCandidates evaluates routing once and the decision is sticky for
 	// all tool-follow-up iterations within the same turn so that a multi-step
 	// tool chain doesn't switch models mid-way through.
-	activeCandidates, activeModel := al.selectCandidates(agent, opts.UserMessage, messages)
+	var activeCandidates []providers.FallbackCandidate
+	var activeModel string
+	if opts.effProvider != nil {
+		// Workspace overrides the provider — skip routing and fallback
+		// candidates since they may reference different provider credentials.
+		activeModel = effModel
+	} else {
+		activeCandidates, activeModel = al.selectCandidates(agent, opts.UserMessage, messages)
+		if opts.effModel != "" {
+			activeModel = effModel
+		}
+	}
 
 	for iteration < agent.MaxIterations {
 		iteration++
