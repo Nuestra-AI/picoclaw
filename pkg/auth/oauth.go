@@ -35,7 +35,7 @@ type OAuthProviderConfig struct {
 func OpenAIOAuthConfig() OAuthProviderConfig {
 	return OAuthProviderConfig{
 		Issuer:     "https://auth.openai.com",
-		ClientID:   "app_EMoamEEZ73f0CkXaXp7hrann",
+		ClientID:   getEnvOrDefault("PICOCLAW_OPENAI_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann"),
 		Scopes:     "openid profile email offline_access",
 		Originator: "codex_cli_rs",
 		Port:       1455,
@@ -45,11 +45,14 @@ func OpenAIOAuthConfig() OAuthProviderConfig {
 // GoogleAntigravityOAuthConfig returns the OAuth configuration for Google Cloud Code Assist (Antigravity).
 // Client credentials are the same ones used by OpenCode/pi-ai for Cloud Code Assist access.
 func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
-	// These are the same client credentials used by the OpenCode antigravity plugin.
-	clientID := decodeBase64(
-		"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+	clientID := getEnvOrDefault(
+		"PICOCLAW_GOOGLE_CLIENT_ID",
+		decodeBase64("MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ=="),
 	)
-	clientSecret := decodeBase64("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=")
+	clientSecret := getEnvOrDefault(
+		"PICOCLAW_GOOGLE_CLIENT_SECRET",
+		decodeBase64("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY="),
+	)
 	return OAuthProviderConfig{
 		Issuer:       "https://accounts.google.com/o/oauth2/v2",
 		TokenURL:     "https://oauth2.googleapis.com/token",
@@ -58,6 +61,13 @@ func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
 		Scopes:       "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs",
 		Port:         51121,
 	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func decodeBase64(s string) string {
