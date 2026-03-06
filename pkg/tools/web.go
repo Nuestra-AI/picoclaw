@@ -22,9 +22,9 @@ const (
 	perplexityTimeout = 30 * time.Second // Perplexity (LLM-based, slower)
 	fetchTimeout      = 60 * time.Second // WebFetchTool
 
-	defaultMaxChars          = 50000
-	maxRedirects             = 5
-	searchMaxResponseSize    int64 = 2 << 20 // 2 MB — limit for search provider responses
+	defaultMaxChars             = 50000
+	maxRedirects                = 5
+	searchMaxResponseSize int64 = 2 << 20 // 2 MB — limit for search provider responses
 )
 
 // Pre-compiled regexes for HTML text extraction

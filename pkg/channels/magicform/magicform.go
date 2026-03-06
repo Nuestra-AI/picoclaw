@@ -25,8 +25,8 @@ type WebhookPayload struct {
 	ConversationID string `json:"conversationId"`
 	UserID         string `json:"userId"`
 	Message        string `json:"message"`
-	Workspace      string `json:"workspace"`            // e.g. "s1/c1" — agent working directory (relative to workspace_root)
-	ConfigDir      string `json:"configDir,omitempty"`   // e.g. "s1/config" — pre-provisioned config directory (relative to workspace_root)
+	Workspace      string `json:"workspace"`           // e.g. "s1/c1" — agent working directory (relative to workspace_root)
+	ConfigDir      string `json:"configDir,omitempty"` // e.g. "s1/config" — pre-provisioned config directory (relative to workspace_root)
 	CallbackURL    string `json:"callbackUrl"`
 
 	// Tool/skill filtering
@@ -418,4 +418,3 @@ func (c *MagicFormChannel) cleanupLoop() {
 		}
 	}
 }
-

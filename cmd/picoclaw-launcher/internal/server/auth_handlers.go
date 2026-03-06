@@ -268,7 +268,11 @@ func handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	if err := auth.SetCredential(session.Provider, cred); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `<html><body><h2>Failed to save credentials</h2><p>%s</p></body></html>`, html.EscapeString(err.Error()))
+		fmt.Fprintf(
+			w,
+			`<html><body><h2>Failed to save credentials</h2><p>%s</p></body></html>`,
+			html.EscapeString(err.Error()),
+		)
 		return
 	}
 

@@ -396,20 +396,20 @@ func (t *ExecTool) SetAllowPatterns(patterns []string) error {
 // safeEnvVars is the allowlist of environment variable names preserved when
 // filterEnv is enabled. Variables with a PICOCLAW_ prefix are always kept.
 var safeEnvVars = map[string]bool{
-	"PATH":          true,
-	"HOME":          true,
-	"USER":          true,
-	"LANG":          true,
-	"TERM":          true,
-	"SHELL":         true,
-	"TMPDIR":        true,
-	"TMP":           true,
-	"TEMP":          true,
-	"SystemRoot":    true,
-	"COMSPEC":       true,
-	"USERPROFILE":   true,
-	"APPDATA":       true,
-	"LOCALAPPDATA":  true,
+	"PATH":         true,
+	"HOME":         true,
+	"USER":         true,
+	"LANG":         true,
+	"TERM":         true,
+	"SHELL":        true,
+	"TMPDIR":       true,
+	"TMP":          true,
+	"TEMP":         true,
+	"SystemRoot":   true,
+	"COMSPEC":      true,
+	"USERPROFILE":  true,
+	"APPDATA":      true,
+	"LOCALAPPDATA": true,
 }
 
 // filterEnvironment returns a filtered copy of environ keeping only safe vars.

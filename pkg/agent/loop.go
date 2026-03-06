@@ -69,7 +69,7 @@ type processOptions struct {
 	AllowedSkills     []string // If non-empty, only these skills are loaded for this request
 
 	// effSessions and effContextBuilder are set by runAgentLoop when a workspace
-	// override is active. All downstream code (runLLMIteration, forceCompression
+	// override is active. All downstream code (runLLMIteration, forceCompressionWith
 	// retry) MUST use these instead of agent.Sessions / agent.ContextBuilder.
 	effSessions       *session.SessionManager
 	effContextBuilder *ContextBuilder
@@ -647,8 +647,8 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	}
 	if v := msg.Metadata["allowed_skills"]; v != "" {
 		for _, s := range strings.Split(v, ",") {
-			if s := strings.TrimSpace(s); s != "" {
-				allowedSkills = append(allowedSkills, s)
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				allowedSkills = append(allowedSkills, trimmed)
 			}
 		}
 	}
@@ -881,7 +881,15 @@ func (al *AgentLoop) runAgentLoop(
 
 	// 6. Optional: summarization
 	if opts.EnableSummary {
-		al.maybeSummarizeWith(effSessions, agent, opts.SessionKey, opts.Channel, opts.ChatID, opts.effProvider, opts.effModel)
+		al.maybeSummarizeWith(
+			effSessions,
+			agent,
+			opts.SessionKey,
+			opts.Channel,
+			opts.ChatID,
+			opts.effProvider,
+			opts.effModel,
+		)
 	}
 
 	// 7. Optional: send response via bus
@@ -1413,14 +1421,15 @@ func (al *AgentLoop) selectCandidates(
 	return agent.LightCandidates, agent.Router.LightModel()
 }
 
-// maybeSummarize triggers summarization if the session history exceeds thresholds.
-func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, chatID string) {
-	al.maybeSummarizeWith(agent.Sessions, agent, sessionKey, channel, chatID, nil, "")
-}
-
-// maybeSummarizeWith is like maybeSummarize but accepts an explicit SessionManager
+// maybeSummarizeWith triggers summarization if the session history exceeds thresholds.
 // and optional per-request provider/model overrides.
-func (al *AgentLoop) maybeSummarizeWith(sessions *session.SessionManager, agent *AgentInstance, sessionKey, channel, chatID string, effProvider providers.LLMProvider, effModel string) {
+func (al *AgentLoop) maybeSummarizeWith(
+	sessions *session.SessionManager,
+	agent *AgentInstance,
+	sessionKey, channel, chatID string,
+	effProvider providers.LLMProvider,
+	effModel string,
+) {
 	newHistory := sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
 	threshold := agent.ContextWindow * agent.SummarizeTokenPercent / 100
@@ -1437,14 +1446,8 @@ func (al *AgentLoop) maybeSummarizeWith(sessions *session.SessionManager, agent 
 	}
 }
 
-// forceCompression aggressively reduces context when the limit is hit.
+// forceCompressionWith aggressively reduces context when the limit is hit.
 // It drops the oldest 50% of messages (keeping system prompt and last user message).
-func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
-	al.forceCompressionWith(agent.Sessions, agent, sessionKey)
-}
-
-// forceCompressionWith is like forceCompression but accepts an explicit SessionManager.
-// This is needed when a workspace override provides a different session store.
 func (al *AgentLoop) forceCompressionWith(sessions *session.SessionManager, agent *AgentInstance, sessionKey string) {
 	history := sessions.GetHistory(sessionKey)
 	if len(history) <= 4 {
@@ -1583,14 +1586,14 @@ func formatToolsForLog(toolDefs []providers.ToolDefinition) string {
 	return sb.String()
 }
 
-// summarizeSession summarizes the conversation history for a session.
-func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
-	al.summarizeSessionWith(agent.Sessions, agent, sessionKey, nil, "")
-}
-
-// summarizeSessionWith is like summarizeSession but accepts an explicit SessionManager
-// and optional per-request provider/model overrides.
-func (al *AgentLoop) summarizeSessionWith(sessions *session.SessionManager, agent *AgentInstance, sessionKey string, effProvider providers.LLMProvider, effModel string) {
+// summarizeSessionWith summarizes the conversation history for a session.
+func (al *AgentLoop) summarizeSessionWith(
+	sessions *session.SessionManager,
+	agent *AgentInstance,
+	sessionKey string,
+	effProvider providers.LLMProvider,
+	effModel string,
+) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 

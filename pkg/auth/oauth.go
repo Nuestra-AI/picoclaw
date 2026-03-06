@@ -49,7 +49,9 @@ func OpenAIOAuthConfig() OAuthProviderConfig {
 func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
 	clientID := getEnvOrDefault(
 		"PICOCLAW_GOOGLE_CLIENT_ID",
-		decodeBase64("MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ=="),
+		decodeBase64(
+			"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+		),
 	)
 	clientSecret := getEnvOrDefault(
 		"PICOCLAW_GOOGLE_CLIENT_SECRET",
@@ -228,7 +230,11 @@ func RequestDeviceCode(cfg OAuthProviderConfig) (*DeviceCodeInfo, error) {
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 	if resp.StatusCode != http.StatusOK {
-		logger.DebugCF("auth", "device code request failed", map[string]any{"status": resp.StatusCode, "body": string(body)})
+		logger.DebugCF(
+			"auth",
+			"device code request failed",
+			map[string]any{"status": resp.StatusCode, "body": string(body)},
+		)
 		return nil, fmt.Errorf("device code request failed (HTTP %d)", resp.StatusCode)
 	}
 
@@ -317,7 +323,11 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 	if resp.StatusCode != http.StatusOK {
-		logger.DebugCF("auth", "device code request failed", map[string]any{"status": resp.StatusCode, "body": string(body)})
+		logger.DebugCF(
+			"auth",
+			"device code request failed",
+			map[string]any{"status": resp.StatusCode, "body": string(body)},
+		)
 		return nil, fmt.Errorf("device code request failed (HTTP %d)", resp.StatusCode)
 	}
 
