@@ -39,6 +39,54 @@ type ContextBuilder struct {
 	// build time. This catches nested file creations/deletions/mtime changes
 	// that may not update the top-level skill root directory mtime.
 	skillFilesAtCache map[string]time.Time
+
+	// skillsFilter limits which skills are included in the system prompt.
+	// When non-empty, only skills whose name matches an entry are included.
+	// ["*"] means include all skills.
+	skillsFilter []string
+}
+
+// SetSkillsFilter sets the skills filter on the context builder.
+// When non-empty, only skills matching these names are included in the system prompt.
+// Use ["*"] to include all skills.
+func (cb *ContextBuilder) SetSkillsFilter(filter []string) {
+	cb.skillsFilter = filter
+	cb.InvalidateCache()
+}
+
+// buildFilteredSkillsSummary returns the skills summary, filtered by skillsFilter
+// if one is set. When no filter is set, all skills are included.
+func (cb *ContextBuilder) buildFilteredSkillsSummary() string {
+	if len(cb.skillsFilter) == 0 {
+		return cb.skillsLoader.BuildSkillsSummary()
+	}
+
+	// Check for wildcard
+	for _, f := range cb.skillsFilter {
+		if f == "*" {
+			return cb.skillsLoader.BuildSkillsSummary()
+		}
+	}
+
+	// Build filter set
+	filterSet := make(map[string]bool, len(cb.skillsFilter))
+	for _, f := range cb.skillsFilter {
+		filterSet[f] = true
+	}
+
+	allSkills := cb.skillsLoader.ListSkills()
+	var filtered []skills.SkillInfo
+	for _, s := range allSkills {
+		if filterSet[s.Name] {
+			filtered = append(filtered, s)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return ""
+	}
+
+	return skills.FormatSkillsSummary(filtered)
 }
 
 func getGlobalConfigDir() string {
@@ -107,7 +155,7 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 	}
 
 	// Skills - show summary, AI can read full content with read_file tool
-	skillsSummary := cb.skillsLoader.BuildSkillsSummary()
+	skillsSummary := cb.buildFilteredSkillsSummary()
 	if skillsSummary != "" {
 		parts = append(parts, fmt.Sprintf(`# Skills
 

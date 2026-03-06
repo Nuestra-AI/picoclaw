@@ -163,7 +163,7 @@ func TestListSkillsWorkspaceOverridesGlobal(t *testing.T) {
 	assert.Equal(t, "workspace version", skills[0].Description)
 }
 
-func TestListSkillsGlobalOverridesBuiltin(t *testing.T) {
+func TestListSkillsBuiltinCannotBeShadowed(t *testing.T) {
 	tmp := t.TempDir()
 	ws := filepath.Join(tmp, "workspace")
 	global := filepath.Join(tmp, "global")
@@ -176,8 +176,8 @@ func TestListSkillsGlobalOverridesBuiltin(t *testing.T) {
 	skills := sl.ListSkills()
 
 	assert.Len(t, skills, 1)
-	assert.Equal(t, "global", skills[0].Source)
-	assert.Equal(t, "global version", skills[0].Description)
+	assert.Equal(t, "builtin", skills[0].Source)
+	assert.Equal(t, "builtin version", skills[0].Description)
 }
 
 func TestListSkillsMetadataNameDedup(t *testing.T) {

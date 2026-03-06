@@ -105,7 +105,7 @@ func main() {
 		}
 	}()
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, server.SecurityHeaders(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

@@ -18,7 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
+
+const oauthMaxResponseSize int64 = 1 << 20 // 1 MB — more than sufficient for any OAuth response
 
 type OAuthProviderConfig struct {
 	Issuer       string
@@ -33,7 +37,7 @@ type OAuthProviderConfig struct {
 func OpenAIOAuthConfig() OAuthProviderConfig {
 	return OAuthProviderConfig{
 		Issuer:     "https://auth.openai.com",
-		ClientID:   "app_EMoamEEZ73f0CkXaXp7hrann",
+		ClientID:   getEnvOrDefault("PICOCLAW_OPENAI_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann"),
 		Scopes:     "openid profile email offline_access",
 		Originator: "codex_cli_rs",
 		Port:       1455,
@@ -43,11 +47,16 @@ func OpenAIOAuthConfig() OAuthProviderConfig {
 // GoogleAntigravityOAuthConfig returns the OAuth configuration for Google Cloud Code Assist (Antigravity).
 // Client credentials are the same ones used by OpenCode/pi-ai for Cloud Code Assist access.
 func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
-	// These are the same client credentials used by the OpenCode antigravity plugin.
-	clientID := decodeBase64(
-		"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+	clientID := getEnvOrDefault(
+		"PICOCLAW_GOOGLE_CLIENT_ID",
+		decodeBase64(
+			"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+		),
 	)
-	clientSecret := decodeBase64("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=")
+	clientSecret := getEnvOrDefault(
+		"PICOCLAW_GOOGLE_CLIENT_SECRET",
+		decodeBase64("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY="),
+	)
 	return OAuthProviderConfig{
 		Issuer:       "https://accounts.google.com/o/oauth2/v2",
 		TokenURL:     "https://oauth2.googleapis.com/token",
@@ -56,6 +65,13 @@ func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
 		Scopes:       "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs",
 		Port:         51121,
 	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func decodeBase64(s string) string {
@@ -212,12 +228,14 @@ func RequestDeviceCode(cfg OAuthProviderConfig) (*DeviceCodeInfo, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading device code response: %w", err)
-	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device code request failed: %s", string(body))
+		logger.DebugCF(
+			"auth",
+			"device code request failed",
+			map[string]any{"status": resp.StatusCode, "body": string(body)},
+		)
+		return nil, fmt.Errorf("device code request failed (HTTP %d)", resp.StatusCode)
 	}
 
 	deviceResp, err := parseDeviceCodeResponse(body)
@@ -303,12 +321,14 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading device code response: %w", err)
-	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device code request failed: %s", string(body))
+		logger.DebugCF(
+			"auth",
+			"device code request failed",
+			map[string]any{"status": resp.StatusCode, "body": string(body)},
+		)
+		return nil, fmt.Errorf("device code request failed (HTTP %d)", resp.StatusCode)
 	}
 
 	deviceResp, err := parseDeviceCodeResponse(body)
@@ -366,10 +386,7 @@ func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*Au
 		return nil, fmt.Errorf("pending")
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading device token response: %w", err)
-	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 
 	var tokenResp struct {
 		AuthorizationCode string `json:"authorization_code"`
@@ -410,12 +427,10 @@ func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCre
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading token refresh response: %w", err)
-	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token refresh failed: %s", string(body))
+		logger.DebugCF("auth", "token refresh failed", map[string]any{"status": resp.StatusCode, "body": string(body)})
+		return nil, fmt.Errorf("token refresh failed (HTTP %d)", resp.StatusCode)
 	}
 
 	refreshed, err := parseTokenResponse(body, cred.Provider)
@@ -506,12 +521,10 @@ func ExchangeCodeForTokens(cfg OAuthProviderConfig, code, codeVerifier, redirect
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading token exchange response: %w", err)
-	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxResponseSize))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange failed: %s", string(body))
+		logger.DebugCF("auth", "token exchange failed", map[string]any{"status": resp.StatusCode, "body": string(body)})
+		return nil, fmt.Errorf("token exchange failed (HTTP %d)", resp.StatusCode)
 	}
 
 	return parseTokenResponse(body, provider)

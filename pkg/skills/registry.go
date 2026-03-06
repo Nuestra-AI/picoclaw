@@ -36,10 +36,11 @@ type SkillMeta struct {
 // InstallResult is returned by DownloadAndInstall to carry metadata
 // back to the caller for moderation and user messaging.
 type InstallResult struct {
-	Version          string
-	IsMalwareBlocked bool
-	IsSuspicious     bool
-	Summary          string
+	Version           string
+	IsMalwareBlocked  bool
+	IsSuspicious      bool
+	Summary           string
+	MetadataAvailable bool
 }
 
 // SkillRegistry is the interface that all skill registries must implement.
