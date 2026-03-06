@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
+	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -52,15 +54,24 @@ type AgentLoop struct {
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey      string   // Session identifier for history/context
-	Channel         string   // Target channel for tool execution
-	ChatID          string   // Target chat ID for tool execution
-	UserMessage     string   // User message content (may include prefix)
-	Media           []string // media:// refs from inbound message
-	DefaultResponse string   // Response when LLM returns empty
-	EnableSummary   bool     // Whether to trigger summarization
-	SendResponse    bool     // Whether to send response via bus
-	NoHistory       bool     // If true, don't load session history (for heartbeat)
+	SessionKey        string   // Session identifier for history/context
+	Channel           string   // Target channel for tool execution
+	ChatID            string   // Target chat ID for tool execution
+	UserMessage       string   // User message content (may include prefix)
+	Media             []string // media:// refs from inbound message
+	DefaultResponse   string   // Response when LLM returns empty
+	EnableSummary     bool     // Whether to trigger summarization
+	SendResponse      bool     // Whether to send response via bus
+	NoHistory         bool     // If true, don't load session history (for heartbeat)
+	WorkspaceOverride string   // If set, use this workspace instead of agent.Workspace
+	AllowedTools      []string // If non-empty, only these tools are active for this request
+	AllowedSkills     []string // If non-empty, only these skills are loaded for this request
+
+	// effSessions and effContextBuilder are set by runAgentLoop when a workspace
+	// override is active. All downstream code (runLLMIteration, forceCompression
+	// retry) MUST use these instead of agent.Sessions / agent.ContextBuilder.
+	effSessions       *session.SessionManager
+	effContextBuilder *ContextBuilder
 }
 
 const (
@@ -615,15 +626,37 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
+	// Extract overrides from metadata (used by magicform channel / gateway mode)
+	workspaceOverride := msg.Metadata["workspace_override"]
+
+	var allowedTools, allowedSkills []string
+	if v := msg.Metadata["allowed_tools"]; v != "" {
+		for _, t := range strings.Split(v, ",") {
+			if s := strings.TrimSpace(t); s != "" {
+				allowedTools = append(allowedTools, s)
+			}
+		}
+	}
+	if v := msg.Metadata["allowed_skills"]; v != "" {
+		for _, s := range strings.Split(v, ",") {
+			if s := strings.TrimSpace(s); s != "" {
+				allowedSkills = append(allowedSkills, s)
+			}
+		}
+	}
+
 	return al.runAgentLoop(ctx, agent, processOptions{
-		SessionKey:      sessionKey,
-		Channel:         msg.Channel,
-		ChatID:          msg.ChatID,
-		UserMessage:     msg.Content,
-		Media:           msg.Media,
-		DefaultResponse: defaultResponse,
-		EnableSummary:   true,
-		SendResponse:    false,
+		SessionKey:        sessionKey,
+		Channel:           msg.Channel,
+		ChatID:            msg.ChatID,
+		UserMessage:       msg.Content,
+		Media:             msg.Media,
+		DefaultResponse:   defaultResponse,
+		EnableSummary:     true,
+		SendResponse:      false,
+		WorkspaceOverride: workspaceOverride,
+		AllowedTools:      allowedTools,
+		AllowedSkills:     allowedSkills,
 	})
 }
 
@@ -741,14 +774,32 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
+	// Resolve effective sessions and context builder.
+	// When a workspace override is provided (e.g. from magicform channel),
+	// create temporary instances pointing at the override path for full isolation.
+	effSessions := agent.Sessions
+	effContextBuilder := agent.ContextBuilder
+
+	if opts.WorkspaceOverride != "" {
+		wp := opts.WorkspaceOverride
+		os.MkdirAll(wp, 0o755)
+		effSessions = session.NewSessionManager(filepath.Join(wp, "sessions"))
+		effContextBuilder = NewContextBuilder(wp)
+	}
+
+	// Apply skills filter unconditionally — works with or without workspace override
+	if len(opts.AllowedSkills) > 0 {
+		effContextBuilder.SetSkillsFilter(opts.AllowedSkills)
+	}
+
 	// 1. Build messages (skip history for heartbeat)
 	var history []providers.Message
 	var summary string
 	if !opts.NoHistory {
-		history = agent.Sessions.GetHistory(opts.SessionKey)
-		summary = agent.Sessions.GetSummary(opts.SessionKey)
+		history = effSessions.GetHistory(opts.SessionKey)
+		summary = effSessions.GetSummary(opts.SessionKey)
 	}
-	messages := agent.ContextBuilder.BuildMessages(
+	messages := effContextBuilder.BuildMessages(
 		history,
 		summary,
 		opts.UserMessage,
@@ -762,7 +813,11 @@ func (al *AgentLoop) runAgentLoop(
 	messages = resolveMediaRefs(messages, al.mediaStore, maxMediaSize)
 
 	// 2. Save user message to session
-	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
+	effSessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
+
+	// Store effective sessions/context on opts so runLLMIteration can use them
+	opts.effSessions = effSessions
+	opts.effContextBuilder = effContextBuilder
 
 	// 3. Run LLM iteration loop
 	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
@@ -779,12 +834,12 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	// 5. Save final assistant message to session
-	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
-	agent.Sessions.Save(opts.SessionKey)
+	effSessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	effSessions.Save(opts.SessionKey)
 
 	// 6. Optional: summarization
 	if opts.EnableSummary {
-		al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
+		al.maybeSummarizeWith(effSessions, agent, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
 	// 7. Optional: send response via bus
@@ -891,8 +946,21 @@ func (al *AgentLoop) runLLMIteration(
 				"max":       agent.MaxIterations,
 			})
 
-		// Build tool definitions
+		// Build tool definitions, filtered by AllowedTools if set
 		providerToolDefs := agent.Tools.ToProviderDefs()
+		if len(opts.AllowedTools) > 0 {
+			allowSet := make(map[string]bool, len(opts.AllowedTools))
+			for _, t := range opts.AllowedTools {
+				allowSet[t] = true
+			}
+			filtered := providerToolDefs[:0]
+			for _, td := range providerToolDefs {
+				if allowSet[td.Function.Name] {
+					filtered = append(filtered, td)
+				}
+			}
+			providerToolDefs = filtered
+		}
 
 		// Log LLM request details
 		logger.DebugCF("agent", "LLM request",
@@ -1017,10 +1085,10 @@ func (al *AgentLoop) runLLMIteration(
 					})
 				}
 
-				al.forceCompression(agent, opts.SessionKey)
-				newHistory := agent.Sessions.GetHistory(opts.SessionKey)
-				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
-				messages = agent.ContextBuilder.BuildMessages(
+				al.forceCompressionWith(opts.effSessions, agent, opts.SessionKey)
+				newHistory := opts.effSessions.GetHistory(opts.SessionKey)
+				newSummary := opts.effSessions.GetSummary(opts.SessionKey)
+				messages = opts.effContextBuilder.BuildMessages(
 					newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID,
 				)
@@ -1117,7 +1185,7 @@ func (al *AgentLoop) runLLMIteration(
 		messages = append(messages, assistantMsg)
 
 		// Save assistant message with tool calls to session
-		agent.Sessions.AddFullMessage(opts.SessionKey, assistantMsg)
+		opts.effSessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
 		// Execute tool calls in parallel
 		type indexedAgentResult struct {
@@ -1143,6 +1211,24 @@ func (al *AgentLoop) runLLMIteration(
 						"tool":      tc.Name,
 						"iteration": iteration,
 					})
+
+				// Enforce tool allowlist at execution time (defense-in-depth)
+				if len(opts.AllowedTools) > 0 {
+					allowed := false
+					for _, t := range opts.AllowedTools {
+						if t == tc.Name {
+							allowed = true
+							break
+						}
+					}
+					if !allowed {
+						agentResults[idx].result = &tools.ToolResult{
+							ForLLM:  fmt.Sprintf("Tool %q is not allowed for this request", tc.Name),
+							IsError: true,
+						}
+						return
+					}
+				}
 
 				// Create async callback for tools that implement AsyncExecutor
 				asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
@@ -1219,7 +1305,7 @@ func (al *AgentLoop) runLLMIteration(
 			messages = append(messages, toolResultMsg)
 
 			// Save tool result message to session
-			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+			opts.effSessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 		}
 	}
 
@@ -1266,7 +1352,12 @@ func (al *AgentLoop) selectCandidates(
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
 func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, chatID string) {
-	newHistory := agent.Sessions.GetHistory(sessionKey)
+	al.maybeSummarizeWith(agent.Sessions, agent, sessionKey, channel, chatID)
+}
+
+// maybeSummarizeWith is like maybeSummarize but accepts an explicit SessionManager.
+func (al *AgentLoop) maybeSummarizeWith(sessions *session.SessionManager, agent *AgentInstance, sessionKey, channel, chatID string) {
+	newHistory := sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
 	threshold := agent.ContextWindow * agent.SummarizeTokenPercent / 100
 
@@ -1276,7 +1367,7 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 			go func() {
 				defer al.summarizing.Delete(summarizeKey)
 				logger.Debug("Memory threshold reached. Optimizing conversation history...")
-				al.summarizeSession(agent, sessionKey)
+				al.summarizeSessionWith(sessions, agent, sessionKey)
 			}()
 		}
 	}
@@ -1285,7 +1376,13 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 // forceCompression aggressively reduces context when the limit is hit.
 // It drops the oldest 50% of messages (keeping system prompt and last user message).
 func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
-	history := agent.Sessions.GetHistory(sessionKey)
+	al.forceCompressionWith(agent.Sessions, agent, sessionKey)
+}
+
+// forceCompressionWith is like forceCompression but accepts an explicit SessionManager.
+// This is needed when a workspace override provides a different session store.
+func (al *AgentLoop) forceCompressionWith(sessions *session.SessionManager, agent *AgentInstance, sessionKey string) {
+	history := sessions.GetHistory(sessionKey)
 	if len(history) <= 4 {
 		return
 	}
@@ -1325,8 +1422,8 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 	newHistory = append(newHistory, history[len(history)-1]) // Last message
 
 	// Update session
-	agent.Sessions.SetHistory(sessionKey, newHistory)
-	agent.Sessions.Save(sessionKey)
+	sessions.SetHistory(sessionKey, newHistory)
+	sessions.Save(sessionKey)
 
 	logger.WarnCF("agent", "Forced compression executed", map[string]any{
 		"session_key":  sessionKey,
@@ -1424,11 +1521,16 @@ func formatToolsForLog(toolDefs []providers.ToolDefinition) string {
 
 // summarizeSession summarizes the conversation history for a session.
 func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
+	al.summarizeSessionWith(agent.Sessions, agent, sessionKey)
+}
+
+// summarizeSessionWith is like summarizeSession but accepts an explicit SessionManager.
+func (al *AgentLoop) summarizeSessionWith(sessions *session.SessionManager, agent *AgentInstance, sessionKey string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	history := agent.Sessions.GetHistory(sessionKey)
-	summary := agent.Sessions.GetSummary(sessionKey)
+	history := sessions.GetHistory(sessionKey)
+	summary := sessions.GetSummary(sessionKey)
 
 	// Keep last 4 messages for continuity
 	if len(history) <= 4 {
@@ -1498,9 +1600,9 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 	}
 
 	if finalSummary != "" {
-		agent.Sessions.SetSummary(sessionKey, finalSummary)
-		agent.Sessions.TruncateHistory(sessionKey, 4)
-		agent.Sessions.Save(sessionKey)
+		sessions.SetSummary(sessionKey, finalSummary)
+		sessions.TruncateHistory(sessionKey, 4)
+		sessions.Save(sessionKey)
 	}
 }
 
