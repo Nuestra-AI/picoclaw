@@ -108,6 +108,22 @@ forward-ported.
 - **Owns:** `BaseChannel.Bus()` accessor in `pkg/channels/base.go`. Used
   by the magicform channel to publish directly with a non-default SessionKey.
 
+### 10. Web admin hardening (web/backend)
+- **Owns:** `web/backend/middleware/security_headers.go` (+ test) — sets
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and a
+  baseline `Content-Security-Policy`. Wired as the outermost wrapper in
+  `web/backend/main.go`'s middleware stack.
+- **Owns:** `web/backend/api/errors.go` — `writeSafeError` /
+  `safeErrorf` helpers that log internal errors server-side via
+  `logger.ErrorCF` and return generic messages to the client.
+- **Applied in:** `web/backend/api/config.go`, `launcher_config.go`,
+  `gateway.go`, `pico.go`. OAuth callback in `oauth.go` also stops
+  echoing `err.Error()` to the user-visible page.
+- **Known follow-up:** ~50 additional `http.Error(w, fmt.Sprintf("...: %v", err), …)`
+  sites in lower-impact files (`skills.go`, `models.go`, `channels.go`,
+  `log.go`, etc.) still leak. Replacement is mechanical; tracked as
+  follow-up work after this sync PR.
+
 ---
 
 ## Sync playbook
@@ -131,8 +147,10 @@ When pulling a new upstream:
 
 - **Launcher (`cmd/picoclaw-launcher/`)**: dropped during the
   2026-05-07 sync. Half its dependencies were deleted upstream and
-  MagicForm doesn't use the launcher's HTTP API. Upstream's
-  `web/backend/` is the replacement if a web admin is ever needed.
+  MagicForm doesn't use the launcher's HTTP API. The launcher's
+  security hardening (XSS escaping, error logging, SecurityHeaders)
+  was forward-ported to upstream's replacement at `web/backend/` —
+  see entry 10 above.
 - **Deprecated `AgentDefaults.Model`**: dropped during the 2026-05-07
   sync. Use `model_name`. Workspace overlays that still set the old
   `"model"` JSON key will be silently ignored — migrate them.
