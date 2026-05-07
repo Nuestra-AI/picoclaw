@@ -51,7 +51,7 @@ func (h *Handler) createWsProxy(origProtocol string, upstreamProtocol string) *h
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Errorf("Failed to proxy WebSocket: %v", err)
-			http.Error(w, "Gateway unavailable: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "Gateway unavailable", http.StatusBadGateway)
 		},
 	}
 	return wsProxy
@@ -66,7 +66,7 @@ func (h *Handler) createPicoHTTPProxy(token string) *httputil.ReverseProxy {
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			logger.Errorf("Failed to proxy Pico HTTP request: %v", err)
-			http.Error(w, "Gateway unavailable: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "Gateway unavailable", http.StatusBadGateway)
 		},
 	}
 }
@@ -200,7 +200,7 @@ func (h *Handler) handlePicoMediaProxy() http.HandlerFunc {
 func (h *Handler) handleGetPicoInfo(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to load config", err)
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *Handler) handleGetPicoInfo(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleRegenPicoToken(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to load config", err)
 		return
 	}
 
@@ -229,7 +229,7 @@ func (h *Handler) handleRegenPicoToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := config.SaveConfig(h.configPath, cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to save config", err)
 		return
 	}
 
@@ -285,14 +285,14 @@ func (h *Handler) EnsurePicoChannel() (bool, error) {
 func (h *Handler) handlePicoSetup(w http.ResponseWriter, r *http.Request) {
 	changed, err := h.EnsurePicoChannel()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to set up Pico channel", err)
 		return
 	}
 
 	// Reload config (EnsurePicoChannel may have modified it).
 	cfg, err := config.LoadConfig(h.configPath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to load config", err)
 		return
 	}
 

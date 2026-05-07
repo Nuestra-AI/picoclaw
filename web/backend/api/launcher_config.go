@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/sipeed/picoclaw/web/backend/launcherconfig"
@@ -42,7 +41,7 @@ func (h *Handler) loadLauncherConfig() (launcherconfig.Config, error) {
 func (h *Handler) handleGetLauncherConfig(w http.ResponseWriter, r *http.Request) {
 	cfg, err := h.loadLauncherConfig()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load launcher config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to load launcher config", err)
 		return
 	}
 
@@ -57,13 +56,13 @@ func (h *Handler) handleGetLauncherConfig(w http.ResponseWriter, r *http.Request
 func (h *Handler) handleUpdateLauncherConfig(w http.ResponseWriter, r *http.Request) {
 	var payload launcherConfigPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		writeSafeError(w, http.StatusBadRequest, "Invalid JSON", err)
 		return
 	}
 
 	cfg, err := h.loadLauncherConfig()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load launcher config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to load launcher config", err)
 		return
 	}
 	cfg.Port = payload.Port
@@ -76,7 +75,7 @@ func (h *Handler) handleUpdateLauncherConfig(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := launcherconfig.Save(h.launcherConfigPath(), cfg); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save launcher config: %v", err), http.StatusInternalServerError)
+		writeSafeError(w, http.StatusInternalServerError, "Failed to save launcher config", err)
 		return
 	}
 
