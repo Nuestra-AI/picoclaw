@@ -286,10 +286,13 @@ func TestProvisionBootstrapFiles_CopiesFiles(t *testing.T) {
 		t.Fatalf("provisionBootstrapFiles: %v", err)
 	}
 
-	if got, err := os.ReadFile(filepath.Join(workspace, "AGENT.md")); err != nil || string(got) != "hello" {
+	got, err := os.ReadFile(filepath.Join(workspace, "AGENT.md"))
+	if err != nil || string(got) != "hello" {
 		t.Errorf("AGENT.md not copied correctly: got=%q err=%v", got, err)
 	}
-	if got, err := os.ReadFile(filepath.Join(workspace, "skills", "demo", "SKILL.md")); err != nil || string(got) != "a skill" {
+	skillCopy := filepath.Join(workspace, "skills", "demo", "SKILL.md")
+	got, err = os.ReadFile(skillCopy)
+	if err != nil || string(got) != "a skill" {
 		t.Errorf("skills/demo/SKILL.md not copied correctly: got=%q err=%v", got, err)
 	}
 }
