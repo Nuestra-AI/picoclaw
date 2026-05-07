@@ -275,10 +275,9 @@ A workspace-level `config.json` (placed in the config directory) overlays the gl
 | `agents.defaults` | Merges non-zero fields (model_name, max_tokens, temperature, etc.) | No |
 | `agents.list` | Replaces global agents list | No |
 | `tools` | Merges only keys present in the file (unmentioned tools are not affected) | No |
-| `session` | Merges non-zero fields (dm_scope, identity_links) | No |
-| `bindings` | Replaces global bindings | No |
+| `session` | Merges non-zero fields (dimensions, identity_links) | No |
 
-**Not honored** (infrastructure-level): `gateway`, `heartbeat`, `devices`, `providers`, `channels`.
+**Not honored** (infrastructure-level): `gateway`, `heartbeat`, `devices`, `providers`, `channel_list`.
 
 **Protected fields**: `workspace_root` cannot be overridden by a workspace config overlay — the boundary is always set by the base (global) config. If a workspace overlay sets a `workspace` value, it is validated against the base config's `workspace_root`; traversal attempts (e.g. `../../escape`) cause a hard error.
 
