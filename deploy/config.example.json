@@ -1,0 +1,55 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace_root": "/data/workspaces",
+      "workspace": "/data/workspaces/default",
+      "model_name": "default-model",
+      "max_tokens": 4096,
+      "max_tool_iterations": 10,
+      "restrict_to_workspace": true,
+      "allow_read_outside_workspace": false
+    }
+  },
+  "model_list": [
+    {
+      "model_name": "default-model",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4.6"
+    }
+  ],
+  "channel_list": {
+    "magicform": {
+      "enabled": true,
+      "type": "magicform",
+      "allow_from": [],
+      "settings": {
+        "backend_url": "https://api.magicform.example.com",
+        "webhook_path": "/hooks/magicform"
+      }
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "tools": {
+    "exec": {
+      "enabled": true,
+      "enable_deny_patterns": true,
+      "filter_env": true,
+      "timeout_seconds": 60
+    },
+    "read_file": {
+      "enabled": true
+    },
+    "write_file": {
+      "enabled": true
+    },
+    "list_dir": {
+      "enabled": true
+    },
+    "web_fetch": {
+      "enabled": true
+    }
+  }
+}

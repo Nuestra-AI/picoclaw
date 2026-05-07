@@ -1,0 +1,83 @@
+# MagicForm-targeted compose file for the multi-tenant picoclaw gateway.
+#
+# Deliberately separate from docker/docker-compose.yml (which carries
+# upstream's launcher / agent profiles) so future syncs of upstream's
+# compose don't conflict with our deploy story.
+#
+# Usage:
+#   cp deploy/config.example.json deploy/data/config.json
+#   $EDITOR deploy/data/config.json
+#   echo 'PICOCLAW_CHANNELS_MAGICFORM_TOKEN=...' >> deploy/.env
+#   echo 'ANTHROPIC_API_KEY=...'                 >> deploy/.env
+#   docker compose -f deploy/docker-compose.magicform.yml up -d
+#   docker compose -f deploy/docker-compose.magicform.yml logs -f
+#
+# The image is built from the upstream Dockerfile, which already uses the
+# goolm,stdjson build tags (no libolm system dependency required).
+
+services:
+  picoclaw:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: magicform-picoclaw:latest
+    container_name: picoclaw-magicform
+    restart: unless-stopped
+    # Bind to localhost only by default; expose externally via reverse
+    # proxy (Caddy / Traefik / nginx) that terminates TLS for the
+    # MagicForm webhook.
+    ports:
+      - "127.0.0.1:18790:18790"
+    volumes:
+      # Gateway base config + .security.yml (the SecureString side-store).
+      - ./data:/root/.picoclaw
+      # Tenant workspace_root. Bind-mount a host path so tenant data
+      # survives container restarts and operators can seed config_dir/
+      # files directly. Path on the LEFT must match workspace_root in
+      # config.json — both should be /data/workspaces inside the container
+      # for the example to work as written.
+      - /data/workspaces:/data/workspaces
+    environment:
+      # workspace_root mirrors what's in config.json; setting it here too
+      # so it's discoverable from `docker inspect` and survives if the
+      # mounted config.json forgets the field.
+      - PICOCLAW_AGENTS_DEFAULTS_WORKSPACE_ROOT=/data/workspaces
+      # Secrets are pulled from the env or .env file at compose time.
+      # SecureString fields (token) live in .security.yml after first
+      # save; on first start the env value seeds them.
+      - PICOCLAW_CHANNELS_MAGICFORM_TOKEN
+      - ANTHROPIC_API_KEY
+      # Add other provider keys here as needed:
+      # - OPENAI_API_KEY
+      # - GEMINI_API_KEY
+    healthcheck:
+      # The magicform channel exposes a health endpoint distinct from
+      # the gateway's generic /health.
+      test:
+        ["CMD-SHELL", "wget -qO- http://127.0.0.1:18790/health/magicform || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# Optional: a TLS-terminating reverse proxy. Uncomment and adapt to your
+# DNS / cert setup. Without this, you must run a separate TLS terminator
+# in front of the gateway for production.
+#
+#  caddy:
+#    image: caddy:2-alpine
+#    restart: unless-stopped
+#    ports:
+#      - "80:80"
+#      - "443:443"
+#    volumes:
+#      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+#      - caddy_data:/data
+#      - caddy_config:/config
+#    depends_on:
+#      picoclaw:
+#        condition: service_healthy
+#
+#volumes:
+#  caddy_data:
+#  caddy_config:
