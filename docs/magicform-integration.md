@@ -299,33 +299,17 @@ Each request gets a unique session key: `agent:main:magicform:{stackId}:{convers
 
 Sessions are stored at `{workspace}/sessions/`. Different conversations within the same stack share the config directory (API keys, bootstrap files) but have separate workspace directories, sessions, and memory.
 
-> **Multi-tenancy phase status (current PR: phase 1).** The webhook protocol —
-> `workspace`, `configDir`, `allowedTools`, `allowedSkills` — is fully wired. The
-> agent loop validates these hints against `agents.defaults.workspace_root` and
-> attaches them to the per-turn `processOptions` as `WorkspaceOverride`,
-> `ConfigDir`, `AllowedTools`, `AllowedSkills`.
->
-> What phase 1 does **not** yet do:
-> - Swap the session store per turn (today all turns currently share
->   `agent.Sessions`).
-> - Swap the context builder per turn.
-> - Re-resolve the LLM provider/credentials from the per-tenant config overlay.
-> - Filter the tool/skill lists exposed to the LLM by the allowlists.
->
-> Phase 2 (separate PR) will introduce `effSessions`, `effContextBuilder`,
-> `effProvider`, and `effModel` on `processOptions` and thread them through the
-> turn execution path so each tenant's turn runs against an isolated session
-> store, context builder, and provider credential set, with tool/skill
-> filtering applied. Until phase 2 lands, treat MagicForm webhooks as a single-
-> tenant integration even when multiple `stackId`/`conversationId` pairs are
-> sent.
+**Multi-tenancy is active.** The first time the gateway sees a tenant (keyed by `workspace` + `configDir` from the webhook payload) it provisions a fresh `AgentInstance` rooted at the tenant's workspace, applies the workspace-local `<configDir>/config.json` overlay, resolves the tenant's LLM provider from the merged config, and registers the agent under a stable hashed ID. Subsequent turns for the same tenant route to the cached instance. Agents are not evicted; they live for the gateway process's lifetime.
+
+What this means for you, the operator:
+
+- **Sessions** are per-tenant by virtue of each tenant's `AgentInstance` having its own `Sessions` store rooted at `{workspace}/sessions/`. Two tenants never share history.
+- **Provider credentials** can be per-tenant — set `model_list` (and optionally `agents.defaults.model_name`/`provider`) inside `<configDir>/config.json`. `MergeWorkspaceConfig` overlays it onto the gateway's base config before the tenant agent's provider is constructed.
+- **Tool allowlist** (`allowedTools` in the webhook payload) disables tools at registration time on the tenant agent — the LLM never sees disallowed tools and can't invoke them. Defense-in-depth: the per-turn `AllowedTools` check on `processOptions` is the second layer.
+- **Skill allowlist** (`allowedSkills`) sets the tenant agent's `ContextBuilder.SkillsFilter` so only listed skills appear in the system prompt.
+- **Filesystem boundary**: every filesystem tool (`read_file`, `write_file`, `exec`, etc.) is constructed with the tenant workspace baked in — physically can't escape, even if the in-tenant code attempted to. Combined with the `workspace_root` validation at webhook ingress, this is the load-bearing isolation invariant.
 
 ### Processing flow
-
-The flow below is **the phase-2 target**. Phase 1 stops at "publish
-InboundMessage to bus": the agent loop receives the hints but does not yet
-swap effective sessions/provider/context. Steps marked `[phase 2]` are not
-active in the current code.
 
 ```
 MagicForm                          PicoClaw Gateway
@@ -342,12 +326,16 @@ MagicForm                          PicoClaw Gateway
     |                              Agent loop:
     |                                extractTenantOverrides — re-validate against workspace_root
     |                                attach overrides to processOptions
-    |                                [phase 2] create temp sessions + context (effSessions/effContextBuilder)
-    |                                [phase 2] copyBootstrapFiles(configDir -> workspace)
-    |                                [phase 2] loadWorkspaceConfig(configDir)
-    |                                [phase 2] mergeWorkspaceConfig into cloned global cfg
-    |                                [phase 2] createProvider per-request (effProvider/effModel)
-    |                                [phase 2] apply tool/skill filters
+    |                                resolveTenantAgent — cache lookup or first-build:
+    |                                    LoadWorkspaceConfig(configDir)
+    |                                    MergeWorkspaceConfig into cloned cfg
+    |                                    pin tenant workspace
+    |                                    applyTenantToolAllowlist
+    |                                    providerFactory(tenant model_config)
+    |                                    NewAgentInstance(...)
+    |                                    SetSkillsFilter(allowedSkills)
+    |                                    provisionBootstrapFiles(configDir, workspace)
+    |                                run LLM iterations on the tenant agent:
     |                                run LLM iterations:
     |                                  for each iteration:
     |                                    LLM call → accumulate token usage
