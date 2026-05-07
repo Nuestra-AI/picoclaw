@@ -126,7 +126,26 @@ forward-ported.
 - **Owns:** `BaseChannel.Bus()` accessor in `pkg/channels/base.go`. Used
   by the magicform channel to publish directly with a non-default SessionKey.
 
-### 10. Web admin hardening (web/backend)
+### 10. Deployment tooling (deploy/)
+- **Owns:** `deploy/` directory — entirely fork-owned.
+  - `deploy/README.md`: operator-facing setup guide for local + Docker.
+  - `deploy/docker-compose.magicform.yml`: compose file for the gateway
+    with the right volumes, env, and healthcheck for multi-tenant ops.
+    Deliberately separate from upstream's `docker/docker-compose.yml`
+    so future syncs of upstream's compose don't conflict.
+  - `deploy/config.example.json`: gateway base config template.
+  - `deploy/tenant.example.config.json`: per-tenant overlay template.
+  - `deploy/smoke-test.sh`: end-to-end script that exercises CLI tenant
+    flow, webhook tenant provisioning, bootstrap-file copy, two-tenant
+    session isolation, and the path-escape rejection — runs against
+    either a local or Dockerized gateway.
+  - `deploy/.gitignore`: keeps `data/` and `.env` out of git.
+- **Reuses upstream's Dockerfile** (`docker/Dockerfile`) without
+  modification because `make build` already uses the `goolm,stdjson`
+  build tags by default — the binary it produces works for our fork.
+  No fork-specific Dockerfile to maintain.
+
+### 11. Web admin hardening (web/backend)
 - **Owns:** `web/backend/middleware/security_headers.go` (+ test) — sets
   `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and a
   baseline `Content-Security-Policy`. Wired as the outermost wrapper in
