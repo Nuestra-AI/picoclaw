@@ -277,7 +277,8 @@ func TestProvisionBootstrapFiles_CopiesFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "AGENT.md"), []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "skills", "demo", "SKILL.md"), []byte("a skill"), 0o600); err != nil {
+	skillPath := filepath.Join(configDir, "skills", "demo", "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte("a skill"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

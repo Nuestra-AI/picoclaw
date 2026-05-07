@@ -77,7 +77,7 @@ type AgentLoop struct {
 
 	// tenantAgents caches AgentInstance objects provisioned on-demand for
 	// magicform tenants. See pkg/agent/agent_tenant_registry.go (fork-owned).
-	// Lazily initialised in resolveTenantAgent.
+	// Lazily initialized in resolveTenantAgent.
 	tenantAgents *tenantAgentCache
 }
 
