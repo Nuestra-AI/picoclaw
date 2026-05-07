@@ -601,11 +601,15 @@ func main() {
 		LocalAutoLogin: localAutoLogin,
 	}, accessControlledMux)
 
-	// Apply middleware stack
-	handler := middleware.Recoverer(
-		middleware.Logger(
-			middleware.ReferrerPolicyNoReferrer(
-				middleware.JSONContentType(dashAuth),
+	// Apply middleware stack. SecurityHeaders runs outermost so its headers
+	// land on every response — including ones that bypass inner middleware
+	// (e.g. early 5xx returns from Recoverer).
+	handler := middleware.SecurityHeaders(
+		middleware.Recoverer(
+			middleware.Logger(
+				middleware.ReferrerPolicyNoReferrer(
+					middleware.JSONContentType(dashAuth),
+				),
 			),
 		),
 	)
