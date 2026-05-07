@@ -430,21 +430,23 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := oauthConfigForProvider(flow.Provider)
 	if err != nil {
+		// Record the real error server-side; show the user a generic message.
+		// Internal errors here can leak provider config / library internals.
 		h.setOAuthFlowError(flow.ID, err.Error())
-		renderOAuthCallbackPage(w, flow.ID, oauthFlowError, "Unsupported provider", err.Error())
+		renderOAuthCallbackPage(w, flow.ID, oauthFlowError, "Unsupported provider", "unsupported provider")
 		return
 	}
 
 	cred, err := oauthExchangeCodeForTokens(cfg, code, flow.CodeVerifier, flow.RedirectURI)
 	if err != nil {
 		h.setOAuthFlowError(flow.ID, fmt.Sprintf("token exchange failed: %v", err))
-		renderOAuthCallbackPage(w, flow.ID, oauthFlowError, "Token exchange failed", err.Error())
+		renderOAuthCallbackPage(w, flow.ID, oauthFlowError, "Token exchange failed", "token exchange failed")
 		return
 	}
 
 	if err := h.persistCredentialAndConfig(flow.Provider, oauthMethodTokenOrOAuth(flow.Method), cred); err != nil {
 		h.setOAuthFlowError(flow.ID, fmt.Sprintf("failed to save credential: %v", err))
-		renderOAuthCallbackPage(w, flow.ID, oauthFlowError, "Failed to save credential", err.Error())
+		renderOAuthCallbackPage(w, flow.ID, oauthFlowError, "Failed to save credential", "failed to save credential")
 		return
 	}
 
