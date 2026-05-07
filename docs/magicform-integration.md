@@ -40,7 +40,7 @@ Per-stack config overlays are placed in the config directory. See [cli.md § Wor
 
 ### Channel config
 
-Add to `~/.picoclaw/config.json`:
+Add to `~/.picoclaw/config.json`. Channels now use the upstream map+settings shape: each channel is keyed under `channel_list` and its provider-specific options live under `settings`.
 
 ```jsonc
 {
@@ -53,25 +53,31 @@ Add to `~/.picoclaw/config.json`:
     "host": "0.0.0.0",
     "port": 18790
   },
-  "channels": {
+  "channel_list": {
     "magicform": {
       "enabled": true,
-      "token": "your-shared-secret",
-      "backend_url": "https://api.magicform.example.com",
-      "webhook_path": "/hooks/magicform",
-      "allow_from": []
+      "type": "magicform",
+      "allow_from": [],
+      "settings": {
+        "backend_url": "https://api.magicform.example.com",
+        "webhook_path": "/hooks/magicform"
+      }
     }
   }
 }
 ```
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| `token` | Bearer token for webhook auth. Empty = allow all (dev only). | `""` |
-| `backend_url` | Fallback callback URL base (used when payload omits `callbackUrl`). | `""` |
-| `webhook_path` | HTTP path for the webhook endpoint. | `/hooks/magicform` |
-| `workspace_root` | Channel-level override for workspace path validation root. If not set, falls back to `agents.defaults.workspace_root`. At least one must be configured. | `""` |
-| `allow_from` | Sender ID allowlist. Empty = allow all. Accepts strings and numbers (e.g. `["user1", 12345]`). | `[]` |
+The `token` field is a `SecureString`: it is **not** stored in `config.json` in plaintext. Set it once via environment variable or `picoclaw auth set` and it lands in `~/.picoclaw/.security.yml` (the security side-store), not the JSON config.
+
+| Field | Location | Description | Default |
+|-------|----------|-------------|---------|
+| `enabled` | top-level | Enable the channel. | `false` |
+| `type` | top-level | Always `"magicform"` (matches the channel factory key). | — |
+| `allow_from` | top-level | Sender ID allowlist. Empty = allow all. Accepts strings and numbers (e.g. `["user1", 12345]`). | `[]` |
+| `settings.token` | secure store | Bearer token for webhook auth. Empty = allow all (dev only). Stored in `.security.yml`, not `config.json`. | `""` |
+| `settings.backend_url` | settings | Fallback callback URL base (used when payload omits `callbackUrl`). | `""` |
+| `settings.webhook_path` | settings | HTTP path for the webhook endpoint. | `/hooks/magicform` |
+| `settings.workspace_root` | settings | Channel-level override for workspace path validation root. If not set, falls back to `agents.defaults.workspace_root`. At least one must be configured. | `""` |
 
 **`workspace_root` resolution**: The MagicForm channel determines its effective workspace root using:
 1. `channels.magicform.workspace_root` (channel-level override), if set.
@@ -80,10 +86,9 @@ Add to `~/.picoclaw/config.json`:
 
 The recommended approach is to set `workspace_root` once in `agents.defaults` so that it applies to both the CLI and all gateway channels. Use the channel-level `workspace_root` only if MagicForm needs a different root than other entry points.
 
-All fields can be set via environment variables:
+Most settings can be set via environment variables:
 
 ```bash
-PICOCLAW_CHANNELS_MAGICFORM_ENABLED=true
 PICOCLAW_CHANNELS_MAGICFORM_TOKEN=your-shared-secret
 PICOCLAW_CHANNELS_MAGICFORM_BACKEND_URL=https://api.magicform.example.com
 PICOCLAW_CHANNELS_MAGICFORM_WEBHOOK_PATH=/hooks/magicform
@@ -91,6 +96,8 @@ PICOCLAW_CHANNELS_MAGICFORM_WORKSPACE_ROOT=/data/workspaces
 PICOCLAW_CHANNELS_MAGICFORM_ALLOW_FROM=sender1,sender2
 PICOCLAW_AGENTS_DEFAULTS_WORKSPACE_ROOT=/data/workspaces
 ```
+
+The `enabled` flag and `type` are not env-bindable — set them in `config.json` (or YAML). Setting `PICOCLAW_CHANNELS_MAGICFORM_TOKEN` populates the secure store entry on next save.
 
 ### Start the gateway
 
@@ -292,7 +299,33 @@ Each request gets a unique session key: `agent:main:magicform:{stackId}:{convers
 
 Sessions are stored at `{workspace}/sessions/`. Different conversations within the same stack share the config directory (API keys, bootstrap files) but have separate workspace directories, sessions, and memory.
 
+> **Multi-tenancy phase status (current PR: phase 1).** The webhook protocol —
+> `workspace`, `configDir`, `allowedTools`, `allowedSkills` — is fully wired. The
+> agent loop validates these hints against `agents.defaults.workspace_root` and
+> attaches them to the per-turn `processOptions` as `WorkspaceOverride`,
+> `ConfigDir`, `AllowedTools`, `AllowedSkills`.
+>
+> What phase 1 does **not** yet do:
+> - Swap the session store per turn (today all turns currently share
+>   `agent.Sessions`).
+> - Swap the context builder per turn.
+> - Re-resolve the LLM provider/credentials from the per-tenant config overlay.
+> - Filter the tool/skill lists exposed to the LLM by the allowlists.
+>
+> Phase 2 (separate PR) will introduce `effSessions`, `effContextBuilder`,
+> `effProvider`, and `effModel` on `processOptions` and thread them through the
+> turn execution path so each tenant's turn runs against an isolated session
+> store, context builder, and provider credential set, with tool/skill
+> filtering applied. Until phase 2 lands, treat MagicForm webhooks as a single-
+> tenant integration even when multiple `stackId`/`conversationId` pairs are
+> sent.
+
 ### Processing flow
+
+The flow below is **the phase-2 target**. Phase 1 stops at "publish
+InboundMessage to bus": the agent loop receives the hints but does not yet
+swap effective sessions/provider/context. Steps marked `[phase 2]` are not
+active in the current code.
 
 ```
 MagicForm                          PicoClaw Gateway
@@ -304,16 +337,17 @@ MagicForm                          PicoClaw Gateway
     |                              ResolveWorkspacePath(root, configDir)  ← 400 on failure
     |<------------ 200 OK ---------------|
     |                                     |
-    |                              publish InboundMessage to bus
+    |                              publish InboundMessage to bus (Context.Raw carries hints)
     |                                     |
     |                              Agent loop:
-    |                                re-validate workspace/configDir (defense-in-depth)
-    |                                create temp sessions + context
-    |                                copyBootstrapFiles(configDir -> workspace)
-    |                                loadWorkspaceConfig(configDir)
-    |                                mergeWorkspaceConfig into cloned global cfg
-    |                                createProvider (per-request)
-    |                                apply tool/skill filters
+    |                                extractTenantOverrides — re-validate against workspace_root
+    |                                attach overrides to processOptions
+    |                                [phase 2] create temp sessions + context (effSessions/effContextBuilder)
+    |                                [phase 2] copyBootstrapFiles(configDir -> workspace)
+    |                                [phase 2] loadWorkspaceConfig(configDir)
+    |                                [phase 2] mergeWorkspaceConfig into cloned global cfg
+    |                                [phase 2] createProvider per-request (effProvider/effModel)
+    |                                [phase 2] apply tool/skill filters
     |                                run LLM iterations:
     |                                  for each iteration:
     |                                    LLM call → accumulate token usage
