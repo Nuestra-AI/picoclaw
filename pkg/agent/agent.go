@@ -74,6 +74,11 @@ type AgentLoop struct {
 	reloadFunc func() error
 
 	providerFactory func(*config.ModelConfig) (providers.LLMProvider, string, error)
+
+	// tenantAgents caches AgentInstance objects provisioned on-demand for
+	// magicform tenants. See pkg/agent/agent_tenant_registry.go (fork-owned).
+	// Lazily initialized in resolveTenantAgent.
+	tenantAgents *tenantAgentCache
 }
 
 // processOptions configures how a message is processed
