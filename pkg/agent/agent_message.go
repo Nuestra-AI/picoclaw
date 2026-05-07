@@ -196,6 +196,18 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	tenant.applyTo(&opts)
 	tenant.logIfPresent(sessionKey)
 
+	// Phase 2: when overrides are present, swap the routed agent for a
+	// per-tenant AgentInstance so all downstream code (sessions, tools,
+	// provider, context builder) automatically picks up tenant-scoped
+	// state. resolveTenantAgent returns nil/nil if no overrides were set,
+	// in which case the original routed agent stays. See
+	// pkg/agent/agent_tenant_registry.go.
+	if tenantAgent, err := al.resolveTenantAgent(opts); err != nil {
+		return "", err
+	} else if tenantAgent != nil {
+		agent = tenantAgent
+	}
+
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
 	if response, handled := al.handleCommand(ctx, msg, agent, &opts); handled {

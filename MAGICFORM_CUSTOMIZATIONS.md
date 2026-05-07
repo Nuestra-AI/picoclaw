@@ -52,18 +52,36 @@ forward-ported.
   loop reads them in `agent_tenant.go`.
 
 ### 2. Multi-tenancy in the agent loop
-- **Owns:** `pkg/agent/agent_tenant.go` (entirely fork-owned, isolated for
-  sync friendliness) and a small wire-up block in
-  `pkg/agent/agent_message.go::processMessage`.
-- **Surface on processOptions:** `WorkspaceOverride`, `ConfigDir`,
-  `AllowedTools`, `AllowedSkills` (defined in `pkg/agent/agent.go`).
-- **Status: Phase 1.** Hints are validated and plumbed onto
-  `processOptions`. Phase 2 (effSessions, effContextBuilder, effProvider,
-  effModel threaded through `pipeline_llm.go`, `turn_state.go`,
-  `context_manager.go`) is a separate PR.
+- **Owns (fork-only files):**
+  - `pkg/agent/agent_tenant.go` — Phase 1: hint extraction and
+    workspace_root validation from `bus.InboundContext.Raw`.
+  - `pkg/agent/agent_tenant_registry.go` — Phase 2: per-tenant
+    `AgentInstance` cache + `resolveTenantAgent` + `buildTenantAgent` +
+    `applyTenantToolAllowlist` + `deriveTenantAgentID`.
+  - `pkg/agent/agent_tenant_provision.go` — Phase 2: `provisionBootstrapFiles`
+    that idempotently seeds new tenant workspaces from `<configDir>`.
+  - Tests: `agent_tenant_test.go`, `agent_tenant_registry_test.go`.
+- **Wire-up in upstream files (kept tiny):**
+  - `pkg/agent/agent.go`: `processOptions` extended with four override
+    fields (`WorkspaceOverride`, `ConfigDir`, `AllowedTools`,
+    `AllowedSkills`) and one `tenantAgents *tenantAgentCache` field on
+    `AgentLoop`.
+  - `pkg/agent/agent_message.go::processMessage`: ~10-line block that
+    calls `extractTenantOverrides` + `resolveTenantAgent` and substitutes
+    the routed agent for the tenant clone when overrides are present.
+- **Status: Phase 2 active.** Each tenant runs against an isolated
+  `AgentInstance` (own workspace, sessions, ContextBuilder, Tools,
+  Provider). Allowlists enforced at agent-construction time and as
+  defense-in-depth at the per-turn layer.
 - **Security boundary:** validation uses
   `pathutil.ResolveWorkspacePath(agents.defaults.workspace_root, hint)`;
   fails closed when `workspace_root` is unset.
+- **Known follow-ups (deliberate):** no LRU eviction on the tenant
+  cache (revisit when memory shows pressure); no hot-reload when a
+  tenant's `configDir` changes mid-run (gateway restart picks up the
+  new config); MCP tools are not in the explicit `applyTenantToolAllowlist`
+  list — defense-in-depth `processOptions.AllowedTools` still covers
+  them per-turn.
 
 ### 3. Workspace path security utility
 - **Owns:** `pkg/pathutil/{resolve.go,resolve_test.go}` (fork-owned).
