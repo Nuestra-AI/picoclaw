@@ -36,24 +36,24 @@ type WebhookPayload struct {
 
 // CallbackPayload is the outbound payload sent back to MagicForm.
 type CallbackPayload struct {
-	StackID        string `json:"stackId"`
-	ConversationID string `json:"conversationId"`
-	TaskID         string `json:"taskId,omitempty"`
-	Type           string `json:"type"`             // "final", "progress", "escalation"
-	Status         string `json:"status"`            // "success", "error"
-	Response       string `json:"response"`
-	Error          string `json:"error,omitempty"`
-	Runtime        string `json:"runtime"`
-	DurationMs     int64  `json:"durationMs,omitempty"`
-	TokenUsage     *bus.TokenUsage       `json:"tokenUsage,omitempty"`
-	ToolCalls      int                   `json:"toolCalls,omitempty"`
-	Progress       *ProgressPayload      `json:"progress"`       // null unless type=progress
-	Escalation     *EscalationPayload    `json:"escalation"`     // null unless type=escalation
+	StackID        string             `json:"stackId"`
+	ConversationID string             `json:"conversationId"`
+	TaskID         string             `json:"taskId,omitempty"`
+	Type           string             `json:"type"`   // "final", "progress", "escalation"
+	Status         string             `json:"status"` // "success", "error"
+	Response       string             `json:"response"`
+	Error          string             `json:"error,omitempty"`
+	Runtime        string             `json:"runtime"`
+	DurationMs     int64              `json:"durationMs,omitempty"`
+	TokenUsage     *bus.TokenUsage    `json:"tokenUsage,omitempty"`
+	ToolCalls      int                `json:"toolCalls,omitempty"`
+	Progress       *ProgressPayload   `json:"progress"`   // null unless type=progress
+	Escalation     *EscalationPayload `json:"escalation"` // null unless type=escalation
 }
 
 // ProgressPayload is populated for type="progress" callbacks.
 type ProgressPayload struct {
-	Status     string `json:"status"`               // e.g. "thinking"
+	Status     string `json:"status"` // e.g. "thinking"
 	ToolName   string `json:"toolName,omitempty"`
 	StepNumber int    `json:"stepNumber,omitempty"`
 	Message    string `json:"message,omitempty"`

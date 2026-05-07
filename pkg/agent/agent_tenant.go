@@ -113,7 +113,7 @@ func (o tenantOverrides) applyTo(opts *processOptions) {
 	}
 }
 
-// logIfPresent emits a single info log line summarising the override surface
+// logIfPresent emits a single info log line summarizing the override surface
 // for a turn, so operators can see tenant routing at a glance.
 func (o tenantOverrides) logIfPresent(sessionKey string) {
 	if o.workspace == "" && o.configDir == "" && len(o.allowedTools) == 0 && len(o.allowedSkills) == 0 {
