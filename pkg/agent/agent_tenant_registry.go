@@ -134,7 +134,7 @@ func (al *AgentLoop) resolveTenantAgent(opts processOptions) (*AgentInstance, er
 //     workspace-aware code (filesystem tools, session store, context
 //     builder) uses the tenant's workspace rather than the gateway's.
 //  4. Resolves the effective LLM provider from the merged config so the
-//     tenant's API key / model identifier is honoured.
+//     tenant's API key / model identifier is honored.
 //  5. Constructs an AgentConfig that mirrors what NewAgentInstance
 //     expects, then calls NewAgentInstance to do the heavy lifting.
 //
@@ -177,7 +177,9 @@ func (al *AgentLoop) buildTenantAgent(opts processOptions) (*AgentInstance, erro
 		return nil, fmt.Errorf("tenant agent build: resolve model %q: %w", modelName, err)
 	}
 	if al.providerFactory == nil {
-		return nil, fmt.Errorf("tenant agent build: AgentLoop.providerFactory is nil; gateway not initialised correctly")
+		return nil, fmt.Errorf(
+			"tenant agent build: AgentLoop.providerFactory is nil; gateway not initialized correctly",
+		)
 	}
 	provider, _, err := al.providerFactory(modelCfg)
 	if err != nil {
@@ -241,7 +243,7 @@ func (al *AgentLoop) buildTenantAgent(opts processOptions) (*AgentInstance, erro
 // applyTenantToolAllowlist mutates the cloned tools config so any tool
 // not in the allowlist has its Enabled flag flipped to false before
 // NewAgentInstance reads IsToolEnabled. Empty allowlist means no
-// restriction (default behaviour).
+// restriction (default behavior).
 //
 // Why mutate Enabled fields rather than maintaining a separate disabled
 // list: ToolsConfig has one Enabled bool per tool struct; that's the
