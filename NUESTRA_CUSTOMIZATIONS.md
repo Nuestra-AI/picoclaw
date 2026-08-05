@@ -197,10 +197,12 @@ forward-ported.
   reports known CVEs in dependencies; CodeQL analyzes this repo's own code
   for injection, path traversal, and similar defects — the same class of
   logic as the workspace-boundary enforcement in entries 3 and 5.
-- **Gotcha:** the Go autobuild needs `GOFLAGS=-tags=goolm,stdjson`, set in
-  a step before `init`. Without the tags, a bare `go build ./...` fails on
-  the Matrix channel's libolm binding under `CGO_ENABLED=0` — the same
-  reason the lint job passes `--build-tags=goolm,stdjson`.
+- **Gotcha:** the Go autobuild needs `GOFLAGS=-tags=goolm,stdjson`. Without
+  the tags, a bare `go build ./...` fails on the Matrix channel's libolm
+  binding under `CGO_ENABLED=0` — the same reason the lint job passes
+  `--build-tags=goolm,stdjson`. Set it in a step **after** `init`: `init`
+  warns that forwarding `GOFLAGS` through it is deprecated, and autobuild
+  runs during `analyze`, so a later step still covers the build.
 - **Repo settings (not in git):** secret scanning, push protection, and
   Dependabot alerts are enabled via repo settings rather than a file, so
   they do not travel with a clone. Dependabot *security updates* is still

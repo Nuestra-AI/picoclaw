@@ -52,22 +52,25 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # A bare `go build ./...` fails on the Matrix channel's libolm binding
-      # under CGO_ENABLED=0, so the goolm and stdjson tags are required here
-      # exactly as in the lint job. GOFLAGS reaches autobuild's own go
-      # invocation, which we cannot pass flags to directly. Set before init so
-      # it is in the environment for the whole tracing session.
-      - name: Set Go build tags for autobuild
-        if: matrix.language == 'go'
-        run: echo "GOFLAGS=-tags=goolm,stdjson" >> "$GITHUB_ENV"
-
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
+      # A bare `go build ./...` fails on the Matrix channel's libolm binding
+      # under CGO_ENABLED=0, so the goolm and stdjson tags are required here
+      # exactly as in the lint job. GOFLAGS reaches autobuild's own go
+      # invocation, which we cannot pass flags to directly.
+      #
+      # Set *after* init: init warns that forwarding GOFLAGS through it is
+      # deprecated, and autobuild runs during the analyze step, so setting it
+      # here still covers the build.
+      - name: Set Go build tags for autobuild
+        if: matrix.language == 'go'
+        run: echo "GOFLAGS=-tags=goolm,stdjson" >> "$GITHUB_ENV"
+
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
