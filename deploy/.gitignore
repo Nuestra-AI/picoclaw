@@ -1,0 +1,4 @@
+# Deploy-time data — never commit. Includes .env files (secrets) and the
+# bind-mounted .picoclaw/ tree (config.json, .security.yml, sessions, etc.).
+.env
+data/
