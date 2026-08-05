@@ -68,7 +68,9 @@ cmd/telegram/
 web/backend/dist/*
 !web/backend/dist/.gitkeep
 
+# Local agent instructions and settings; not tracked in this fork.
 .claude/
+CLAUDE.md
 
 docker/data
 
