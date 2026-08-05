@@ -653,9 +653,20 @@ type WeComSettings struct {
 	Streaming           StreamingConfig `json:"streaming,omitzero"      yaml:"-"`
 }
 
-// MagicFormSettings configures the MagicForm webhook channel for tenant-aware
-// callback-based message dispatch.
-type MagicFormSettings struct {
+// NuestraSettings configures a channel speaking the Nuestra Agent platform
+// webhook protocol. One process can run several instances of it, one per
+// brand, each with its own token, webhook path, and callback target:
+//
+//	"channels": {
+//	  "magicform":  {"type": "nuestra", "webhook_path": "/hooks/magicform"},
+//	  "otherbrand": {"type": "nuestra", "webhook_path": "/hooks/otherbrand"}
+//	}
+//
+// The PICOCLAW_CHANNELS_MAGICFORM_* env var names are retained deliberately:
+// they are a deployed contract. Env binding is per-struct, not per-instance,
+// so they apply to whichever instance the operator has configured; multi-brand
+// deployments should use config.json rather than env vars.
+type NuestraSettings struct {
 	Token         SecureString        `json:"token,omitzero"           yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_MAGICFORM_TOKEN"`
 	BackendURL    string              `json:"backend_url"              yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_BACKEND_URL"`
 	WebhookPath   string              `json:"webhook_path"             yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_WEBHOOK_PATH"`
@@ -663,8 +674,15 @@ type MagicFormSettings struct {
 	AllowFrom     FlexibleStringSlice `json:"allow_from,omitempty"     yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_ALLOW_FROM"`
 }
 
-// SetToken sets the MagicForm token and marks it as dirty for security saving
-func (c *MagicFormSettings) SetToken(token string) {
+// MagicFormSettings is a backward-compatible alias for NuestraSettings.
+//
+// Deprecated: use NuestraSettings. MagicForm is one brand served by the
+// Nuestra Agent platform channel, not a protocol of its own. Retained so
+// existing code and configs keep compiling and decoding unchanged.
+type MagicFormSettings = NuestraSettings
+
+// SetToken sets the channel token and marks it as dirty for security saving
+func (c *NuestraSettings) SetToken(token string) {
 	c.Token = *NewSecureString(token)
 }
 

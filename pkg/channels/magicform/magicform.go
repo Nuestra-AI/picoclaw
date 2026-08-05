@@ -77,7 +77,7 @@ type requestContext struct {
 // MagicFormChannel implements the MagicForm channel plugin.
 type MagicFormChannel struct {
 	*channels.BaseChannel
-	settings      *config.MagicFormSettings
+	settings      *config.NuestraSettings
 	workspaceRoot string // effective root: channel-level fallback to global
 	httpClient    *http.Client
 	requests      sync.Map // chatID → *requestContext
@@ -92,7 +92,7 @@ type MagicFormChannel struct {
 // because workspace overrides cannot be validated without a root boundary.
 func NewMagicFormChannel(
 	bc *config.Channel,
-	settings *config.MagicFormSettings,
+	settings *config.NuestraSettings,
 	globalWorkspaceRoot string,
 	msgBus *bus.MessageBus,
 ) (*MagicFormChannel, error) {

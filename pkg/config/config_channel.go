@@ -39,7 +39,10 @@ const (
 	ChannelTeamsWebHook   = "teams_webhook"
 	ChannelMQTT           = "mqtt"
 	ChannelSlackWebHook   = "slack_webhook"
-	// ChannelMagicForm is a fork-only channel; see NUESTRA_CUSTOMIZATIONS.md.
+	// ChannelNuestra is the fork-only channel implementing the Nuestra Agent
+	// platform webhook protocol. ChannelMagicForm is a brand alias for it and
+	// remains valid in existing configs. See NUESTRA_CUSTOMIZATIONS.md.
+	ChannelNuestra   = "nuestra"
 	ChannelMagicForm = "magicform"
 )
 
@@ -684,7 +687,10 @@ var channelSettingsFactory = map[string]any{
 	ChannelTeamsWebHook:   (TeamsWebhookSettings{}),
 	ChannelMQTT:           (MQTTSettings{}),
 	ChannelSlackWebHook:   (SlackWebhookSettings{}),
-	ChannelMagicForm:      (MagicFormSettings{}),
+	ChannelNuestra:        (NuestraSettings{}),
+	// ChannelMagicForm is the original brand alias; both types decode into the
+	// same struct, so existing "type": "magicform" configs keep working.
+	ChannelMagicForm: (NuestraSettings{}),
 }
 
 // RegisterChannelSettings registers a settings struct prototype for a custom
