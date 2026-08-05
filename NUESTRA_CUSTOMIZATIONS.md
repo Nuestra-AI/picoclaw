@@ -1,14 +1,28 @@
-# MagicForm Customizations
+# Nuestra Customizations
 
-This file is the index of customizations the `magicform` fork carries on top
-of `sipeed/picoclaw` upstream. Read this first when:
+This file is the index of customizations the **Nuestra** fork
+(`Nuestra-AI/picoclaw`) carries on top of `sipeed/picoclaw` upstream. Read
+this first when:
 - Doing an upstream sync (start by replaying each customization against the
   new layout if upstream has changed the surrounding code)
 - Reviewing a PR that touches any of the listed files
 - Onboarding a new engineer to the fork
 
 The single source of truth for *what changed* is the git log
-(`git log upstream/main..main`). This file tells you *why* and *where*.
+(`git log public-main..main`). This file tells you *why* and *where*.
+
+> **Naming.** "Nuestra" is the fork. "MagicForm" is **one product that talks
+> to it**, via the `magicform` channel — the first, but not the only one.
+> Fork-wide capabilities (multi-tenancy, workspace boundary, resource caps)
+> are Nuestra's and are channel-agnostic; anything named `magicform` should
+> refer specifically to that channel and its wire protocol.
+>
+> The channel's identifiers are a **live contract with deployed tenants** and
+> are deliberately left alone: the `"magicform"` config key, the
+> `/hooks/magicform` webhook path, the `magicform` platform/channel strings,
+> `ChannelMagicForm`, `MagicFormSettings`, and the
+> `PICOCLAW_CHANNELS_MAGICFORM_*` env vars. Renaming any of those would break
+> existing configs and callers.
 
 ---
 
@@ -22,10 +36,11 @@ The single source of truth for *what changed* is the git log
 2. **Defense-in-depth on workspace boundary.** Every path-manipulating tool
    (`fs`, `exec`, skill installer) honours `agents.defaults.workspace_root`
    as a containment root. Tenants cannot read or write outside it.
-3. **MagicForm webhook channel.** A webhook-driven channel
-   (`pkg/channels/magicform`) accepts inbound messages from MagicForm and
-   posts agent responses back via callback URL. Lives alongside upstream's
-   stock channels.
+3. **Webhook channels for Nuestra products.** A webhook-driven channel
+   pattern that accepts inbound messages and posts agent responses back via
+   a callback URL, alongside upstream's stock channels. `magicform`
+   (`pkg/channels/magicform`) is the first such channel; additional products
+   are expected to add their own rather than extend this one.
 4. **Bounded resource use.** Search APIs and write tools have explicit byte
    limits to keep a hostile or buggy upstream from exhausting memory/disk.
 
@@ -37,7 +52,7 @@ Each entry: subsystem → files touched → most recent commit on `main`.
 When upstream restructures a subsystem, only the matching entry needs to be
 forward-ported.
 
-### 1. MagicForm webhook channel
+### 1. MagicForm webhook channel (one channel, not the fork)
 - **Owns:** `pkg/channels/magicform/{magicform.go,init.go}`
 - **Registers in:** `pkg/gateway/gateway.go` (blank import)
 - **Config plumbing:** `MagicFormSettings` in `pkg/config/config.go`,
@@ -49,9 +64,12 @@ forward-ported.
 - **Tenancy hints:** the webhook handler stuffs `workspace_override`,
   `config_dir`, `allowed_tools`, `allowed_skills` (and `callback_url`,
   `stack_id`, `conversation_id`) into `bus.InboundContext.Raw`; the agent
-  loop reads them in `agent_tenant.go`.
+  loop reads them in `agent_tenant.go`. Those `Raw` keys are a
+  **channel-agnostic contract** (entry 2) — this channel is one producer of
+  them, and any future Nuestra channel can populate the same keys to get
+  multi-tenancy for free.
 
-### 2. Multi-tenancy in the agent loop
+### 2. Multi-tenancy in the agent loop (fork-wide, channel-agnostic)
 - **Owns (fork-only files):**
   - `pkg/agent/agent_tenant.go` — Phase 1: hint extraction and
     workspace_root validation from `bus.InboundContext.Raw`.

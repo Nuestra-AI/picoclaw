@@ -39,7 +39,7 @@ const (
 	ChannelTeamsWebHook   = "teams_webhook"
 	ChannelMQTT           = "mqtt"
 	ChannelSlackWebHook   = "slack_webhook"
-	// ChannelMagicForm is a fork-only channel; see MAGICFORM_CUSTOMIZATIONS.md.
+	// ChannelMagicForm is a fork-only channel; see NUESTRA_CUSTOMIZATIONS.md.
 	ChannelMagicForm = "magicform"
 )
 

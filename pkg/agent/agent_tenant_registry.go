@@ -1,6 +1,6 @@
-// PicoClaw - Per-tenant AgentInstance provisioning for multi-tenant magicform.
+// PicoClaw - Per-tenant AgentInstance provisioning for multi-tenant serving.
 //
-// This file is the magicform fork's primary multi-tenancy implementation
+// This file is the Nuestra fork's primary multi-tenancy implementation
 // on top of upstream's agent registry. It provisions a fresh AgentInstance
 // per tenant the first time we see one (keyed by tenant ID derived from
 // stack_id + workspace), caches it, and routes inbound tenant messages to
@@ -20,7 +20,8 @@
 //     directory, etc.) is automatically inherited — we don't reimplement
 //     it.
 //
-//   - Dynamic tenants: MagicForm provisions stacks at runtime. Static
+//   - Dynamic tenants: callers (e.g. MagicForm) provision stacks at
+//     runtime. Static
 //     `agents.list[]` entries don't fit. We build on first sight, cache,
 //     and reuse.
 //
