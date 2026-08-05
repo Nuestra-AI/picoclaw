@@ -76,6 +76,25 @@ forward-ported.
 - **Security boundary:** validation uses
   `pathutil.ResolveWorkspacePath(agents.defaults.workspace_root, hint)`;
   fails closed when `workspace_root` is unset.
+- **Skills filtering now rides on upstream.** As of the 2026-08-05 sync,
+  the fork-local `buildFilteredSkillsSummary` is gone. Upstream grew an
+  equivalent `ContextBuilder.buildSkillsSummary(allowed []string)` plus
+  `IncludeSkillCatalog`/`SuppressSkillContext` gating, so we adopted it.
+  `SetSkillsFilter` remains (the tenant registry calls it) and now feeds
+  the builder-level default for `systemPromptBuildOptions.AllowedSkills`;
+  a per-request `AllowedSkills` still wins.
+  - **`"*"` wildcard is preserved.** Upstream's `cleanAllowedSet`
+    (`pkg/agent/turn_profile_policy.go`) lowercases and trims but has **no**
+    wildcard branch, so a bare `["*"]` would match only a skill literally
+    named `*` and yield an empty catalog — a silent, invisible failure.
+    We keep the fork's wildcard via `containsSkillWildcard` in
+    `buildSystemPromptParts`: `["*"]` collapses to a nil allowlist, which
+    is upstream's own "include everything" path. The shim lives at our
+    call site rather than inside `cleanAllowedSet` (upstream-owned, shared
+    by other callers) to keep the next sync's merge surface small.
+    Pinned by `TestSkillsFilterWildcardIncludesAllSkills` in
+    `pkg/agent/context_skills_filter_test.go` — verified to fail if the
+    shim is removed.
 - **Known follow-ups (deliberate):** no LRU eviction on the tenant
   cache (revisit when memory shows pressure); no hot-reload when a
   tenant's `configDir` changes mid-run (gateway restart picks up the
@@ -108,7 +127,10 @@ forward-ported.
 - **Owns:** customizations in `pkg/tools/integration/web.go`:
   - `searchMaxResponseSize` constant (2 MB) used by every search provider's
     `io.ReadAll(io.LimitReader(...))`.
-- Last forward-ported: commit `94d28c1b`.
+- Last forward-ported: 2026-08-05 sync (upstream `49183d7e`). Upstream has
+  since added `_ = resp.Body.Close()` at each site and its own `1<<20` cap
+  on the Sogou provider; the merge keeps our cap everywhere else and the
+  tighter upstream bound at Sogou.
 
 ### 7. Output-channel plumbing for tenancy callbacks
 - **Owns:** `pkg/bus/types.go` additions on `OutboundMessage`: `Type`,
@@ -144,13 +166,91 @@ forward-ported.
 
 ---
 
+## Clone setup: never let anything default to upstream
+
+This is a fork of `sipeed/picoclaw`. Git and `gh` both default to the
+**parent** repo in a fork, so a fresh clone will happily try to push
+branches and open PRs against upstream. Run this once per clone:
+
+```bash
+# 1. gh: PRs/issues resolve to our fork, not the parent.
+#    Without this, `gh pr create` targets sipeed/picoclaw.
+gh repo set-default Nuestra-AI/picoclaw
+
+# 2. Make the upstream remote fetch-only. Pushing is then impossible,
+#    not merely discouraged.
+git remote set-url --push upstream DISABLED_use_origin
+
+# 3. Pin push/checkout defaults to origin.
+git config remote.pushDefault origin
+git config checkout.defaultRemote origin
+git config push.default simple
+```
+
+Why all four, rather than just one:
+- `remote.pushDefault=origin` + `push.default=simple` means a branch that
+  tracks `upstream` **refuses to push at all** ("cannot resolve 'simple'
+  push to a single destination") instead of silently pushing to sipeed.
+  This is the safety net for trap 1 below, where `git branch -f` keeps
+  resetting `public-main`'s tracking back to `upstream`.
+- The disabled push URL is belt-and-braces: it makes an explicit
+  `git push upstream ...` fail fast with an obvious message.
+- `gh repo set-default` is separate from git config — git settings do
+  **not** affect where `gh pr create` opens a PR.
+
+Verify with `git rev-parse --abbrev-ref '<branch>@{push}'` — it must print
+an `origin/...` ref for any branch you intend to push.
+
+Also worth clearing on old branches: `git config --get-regexp
+'github-pr-base-branch'`. Stale `sipeed#picoclaw#main` entries left by
+editor tooling will pre-fill the wrong PR base.
+
+---
+
 ## Sync playbook
 
 When pulling a new upstream:
 
+0. Know your two reference points:
+   - `public-main` — a **pristine mirror of `upstream/main`**, pushed to
+     `origin` so it is visible to the whole team and to CI without anyone
+     configuring the upstream remote. It is fast-forward-only and must
+     **never** receive a commit.
+   - `main` — the fork. `git log public-main..main` is the true fork delta,
+     and `git diff public-main main -- <path>` shows what we changed in any
+     file without needing the upstream remote configured.
+
+   **Refreshing `public-main` is a deliberate manual step, not automation.**
+   It is force-updated, so it is left in human hands rather than on a timer.
+   Do it at the start of each sync — never on a schedule:
+
+   ```bash
+   git fetch upstream
+   git branch -f public-main upstream/main            # fast-forward the mirror
+   git push --force origin public-main:public-main    # explicit refspec, never a bare push
+   git branch --set-upstream-to=origin/public-main public-main   # see trap 1
+   ```
+
+   Three traps, all real (each was hit while setting this up):
+   1. **`git branch -f` resets tracking to `upstream` every single time.**
+      A later bare `git push` on this branch would then target **sipeed**.
+      That is why the push above uses an explicit `origin <src>:<dst>`
+      refspec and the tracking is re-pinned afterwards. Verify with
+      `git config branch.public-main.remote` — it must print `origin`.
+   2. **Never `git checkout public-main` and commit.** If it diverges it
+      stops being a mirror and the next sync's merge-base is silently
+      wrong. GitHub branch protection (`lock_branch`) now blocks this;
+      recover by re-running the refresh above.
+   3. **The mirror is force-updated, so it is deliberately manual.** Do
+      not put it on a schedule — an unattended job holding force-push
+      rights is a poor trade for a command run a few times a year.
+      Branch protection keeps `allow_force_pushes` on with
+      `enforce_admins` off precisely so this manual refresh still works.
 1. `git fetch upstream && git fetch origin`
 2. Branch: `git checkout -b sync/upstream-YYYY-MM-DD origin/main`
 3. `git merge upstream/main` and resolve conflicts.
+   Preview the blast radius first — this lists conflicts without touching
+   the worktree: `git merge-tree --write-tree --name-only main upstream/main`
 4. For each subsystem above, replay any commits whose files now no longer
    exist (modify/delete conflicts) onto upstream's new locations.
 5. `go build ./... && go test ./...`
