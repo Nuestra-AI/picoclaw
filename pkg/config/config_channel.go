@@ -760,6 +760,7 @@ func InitChannelList(channels ChannelsConfig) error {
 				// Non-fatal: some env vars may not apply
 			}
 			applyTelegramStreamingEnvCompat(target)
+			applyNuestraEnv(name, target)
 			if err := validateChannelStreamingConfig(name, target); err != nil {
 				return err
 			}
@@ -772,6 +773,85 @@ func InitChannelList(channels ChannelsConfig) error {
 	}
 
 	return nil
+}
+
+// nuestraEnvPrefix builds the env var prefix for one channel instance from its
+// key in the channels map: "magicform" -> "PICOCLAW_CHANNELS_MAGICFORM_".
+// Characters that cannot appear in an env var name become underscores, so a
+// key like "brand-two" resolves to PICOCLAW_CHANNELS_BRAND_TWO_*.
+func nuestraEnvPrefix(channelName string) string {
+	var b strings.Builder
+	b.WriteString("PICOCLAW_CHANNELS_")
+	for _, r := range strings.ToUpper(channelName) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	b.WriteByte('_')
+	return b.String()
+}
+
+// nuestraEnvNeutralPrefix is the brand-neutral env prefix. A deployment running
+// a single Nuestra channel - the common case, one brand per container - sets
+// PICOCLAW_CHANNELS_NUESTRA_TOKEN and never names its brand in the environment.
+const nuestraEnvNeutralPrefix = "PICOCLAW_CHANNELS_NUESTRA_"
+
+// lookupNuestraEnv resolves one setting for a channel instance, preferring the
+// key-scoped variable and falling back to the brand-neutral one.
+func lookupNuestraEnv(prefix, suffix string) (string, bool) {
+	if raw, ok := os.LookupEnv(prefix + suffix); ok {
+		return raw, true
+	}
+	return os.LookupEnv(nuestraEnvNeutralPrefix + suffix)
+}
+
+// applyNuestraEnv applies env overrides to one Nuestra channel instance, keyed
+// by the channel's name rather than by struct type, so secrets stay in the
+// deployment environment instead of config.json.
+//
+// Two forms are accepted per setting, key-scoped winning over neutral:
+//
+//	PICOCLAW_CHANNELS_<KEY>_TOKEN   scoped to the channel keyed <KEY>
+//	PICOCLAW_CHANNELS_NUESTRA_TOKEN applies to any Nuestra channel
+//
+// The neutral form covers one-brand-per-deployment. The key-scoped form is only
+// needed when several brands share a process, where it keeps each brand's token
+// and webhook path from overwriting another's.
+//
+// Tag-based binding via env.Parse cannot express either: it resolves names from
+// the struct type, which every instance shares.
+func applyNuestraEnv(channelName string, target any) {
+	settings, ok := target.(*NuestraSettings)
+	if !ok || settings == nil {
+		return
+	}
+
+	prefix := nuestraEnvPrefix(channelName)
+
+	if raw, ok := lookupNuestraEnv(prefix, "TOKEN"); ok && raw != "" {
+		settings.SetToken(raw)
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "BACKEND_URL"); ok {
+		settings.BackendURL = raw
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "WEBHOOK_PATH"); ok {
+		settings.WebhookPath = raw
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "WORKSPACE_ROOT"); ok {
+		settings.WorkspaceRoot = raw
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "ALLOW_FROM"); ok {
+		parts := strings.Split(raw, ",")
+		allow := make(FlexibleStringSlice, 0, len(parts))
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				allow = append(allow, p)
+			}
+		}
+		settings.AllowFrom = allow
+	}
 }
 
 func applyTelegramStreamingEnvCompat(target any) {

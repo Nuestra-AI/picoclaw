@@ -662,16 +662,17 @@ type WeComSettings struct {
 //	  "otherbrand": {"type": "nuestra", "webhook_path": "/hooks/otherbrand"}
 //	}
 //
-// The PICOCLAW_CHANNELS_MAGICFORM_* env var names are retained deliberately:
-// they are a deployed contract. Env binding is per-struct, not per-instance,
-// so they apply to whichever instance the operator has configured; multi-brand
-// deployments should use config.json rather than env vars.
+// Fields carry no `env` struct tag on purpose. Tag-based binding is applied per
+// struct type, not per channel instance, so one PICOCLAW_CHANNELS_MAGICFORM_*
+// value would be stamped onto every configured brand, overwriting each brand's
+// own token and webhook path. Env overrides are instead resolved per instance
+// from the channel key - see applyNuestraEnv.
 type NuestraSettings struct {
-	Token         SecureString        `json:"token,omitzero"           yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_MAGICFORM_TOKEN"`
-	BackendURL    string              `json:"backend_url"              yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_BACKEND_URL"`
-	WebhookPath   string              `json:"webhook_path"             yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_WEBHOOK_PATH"`
-	WorkspaceRoot string              `json:"workspace_root,omitempty" yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_WORKSPACE_ROOT"`
-	AllowFrom     FlexibleStringSlice `json:"allow_from,omitempty"     yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_ALLOW_FROM"`
+	Token         SecureString        `json:"token,omitzero"           yaml:"token,omitempty"`
+	BackendURL    string              `json:"backend_url"              yaml:"-"`
+	WebhookPath   string              `json:"webhook_path"             yaml:"-"`
+	WorkspaceRoot string              `json:"workspace_root,omitempty" yaml:"-"`
+	AllowFrom     FlexibleStringSlice `json:"allow_from,omitempty"     yaml:"-"`
 }
 
 // MagicFormSettings is a backward-compatible alias for NuestraSettings.

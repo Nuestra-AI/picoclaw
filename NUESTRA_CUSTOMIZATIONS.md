@@ -20,9 +20,15 @@ The single source of truth for *what changed* is the git log
 > The channel's identifiers are a **live contract with deployed tenants** and
 > are deliberately left alone: the `"magicform"` config key, the
 > `/hooks/magicform` webhook path, the `magicform` platform/channel strings,
-> `ChannelMagicForm`, `MagicFormSettings`, and the
-> `PICOCLAW_CHANNELS_MAGICFORM_*` env vars. Renaming any of those would break
-> existing configs and callers.
+> `ChannelMagicForm`, and `MagicFormSettings`. Renaming any of those would
+> break existing configs and callers.
+>
+> Env vars are the exception: they are resolved from the **channel key**, not
+> from a brand baked into the code. A channel keyed `magicform` still reads
+> `PICOCLAW_CHANNELS_MAGICFORM_*`, and the brand-neutral
+> `PICOCLAW_CHANNELS_NUESTRA_*` applies to whichever Nuestra channel is
+> configured — so a one-brand deployment need not name its brand at all. See
+> `applyNuestraEnv` in `pkg/config/config_channel.go`.
 
 ---
 
