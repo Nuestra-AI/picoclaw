@@ -188,6 +188,24 @@ forward-ported.
   `log.go`, etc.) still leak. Replacement is mechanical; tracked as
   follow-up work after this sync PR.
 
+### 11. CodeQL workflow
+- **Owns:** `.github/workflows/codeql.yml` — fork-only; upstream has no
+  CodeQL workflow, so this file should never conflict on sync. Runs on
+  pushes and PRs to `main` plus a weekly schedule, over `go` and
+  `javascript-typescript`.
+- **Why:** complements the `govulncheck` job in `pr.yml`. `govulncheck`
+  reports known CVEs in dependencies; CodeQL analyzes this repo's own code
+  for injection, path traversal, and similar defects — the same class of
+  logic as the workspace-boundary enforcement in entries 3 and 5.
+- **Gotcha:** the Go autobuild needs `GOFLAGS=-tags=goolm,stdjson`, set in
+  a step before `init`. Without the tags, a bare `go build ./...` fails on
+  the Matrix channel's libolm binding under `CGO_ENABLED=0` — the same
+  reason the lint job passes `--build-tags=goolm,stdjson`.
+- **Repo settings (not in git):** secret scanning, push protection, and
+  Dependabot alerts are enabled via repo settings rather than a file, so
+  they do not travel with a clone. Dependabot *security updates* is still
+  off — enabling it means automated PRs, which is a workflow choice.
+
 ---
 
 ## Clone setup: never let anything default to upstream
