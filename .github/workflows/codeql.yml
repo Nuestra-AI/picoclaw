@@ -1,0 +1,73 @@
+# CodeQL static analysis.
+#
+# Fork-local addition (Nuestra); see NUESTRA_CUSTOMIZATIONS.md. Upstream has
+# no CodeQL workflow, so this file should survive upstream syncs untouched.
+#
+# Complements the govulncheck job in pr.yml: govulncheck reports known CVEs in
+# dependencies, CodeQL analyzes this repo's own code for injection, path
+# traversal, and similar defects. The fork's workspace-boundary enforcement is
+# exactly the kind of logic worth guarding against regressions.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so newly published queries reach existing code without waiting
+    # for the next PR to touch it.
+    - cron: "24 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload results to the code scanning dashboard.
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # A bare `go build ./...` fails on the Matrix channel's libolm binding
+      # under CGO_ENABLED=0, so the goolm and stdjson tags are required here
+      # exactly as in the lint job. GOFLAGS reaches autobuild's own go
+      # invocation, which we cannot pass flags to directly. Set before init so
+      # it is in the environment for the whole tracing session.
+      - name: Set Go build tags for autobuild
+        if: matrix.language == 'go'
+        run: echo "GOFLAGS=-tags=goolm,stdjson" >> "$GITHUB_ENV"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
