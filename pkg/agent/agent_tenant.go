@@ -1,23 +1,26 @@
 // PicoClaw - Multi-tenancy overrides for the agent loop.
 //
-// This file is the magicform fork's primary customization on top of upstream.
-// It extracts per-message tenant hints (workspace, config dir, tool/skill
-// allowlists) from InboundMessage.Context.Raw and validates them against the
-// workspace_root security boundary configured in agents.defaults.
+// This file is one of the Nuestra fork's primary customizations on top of
+// upstream. It extracts per-message tenant hints (workspace, config dir,
+// tool/skill allowlists) from InboundMessage.Context.Raw and validates them
+// against the workspace_root security boundary configured in agents.defaults.
+//
+// This layer is channel-agnostic: it reads generic Context.Raw keys and does
+// not know or care which channel produced them. The magicform channel is
+// currently the only producer, but any channel can populate the same keys.
 //
 // Keeping the logic in its own file (rather than scattered through
 // agent_message.go) makes upstream syncs easier: most upstream changes won't
 // touch this file, and when they do the conflict surface is small and obvious.
 //
-// PHASE 1 (current): plumb the override fields onto processOptions so the
-// agent loop has them available. The fields ride on processOptions; downstream
-// callers (pipeline_llm, turn_state, etc.) read them but don't yet swap
-// effective sessions/provider/context based on them.
+// PHASE 1 (shipped): plumb the override fields onto processOptions so the
+// agent loop has them available. The fields ride on processOptions and
+// downstream callers (pipeline_llm, turn_state, etc.) read them.
 //
-// PHASE 2 (future PR): wire effSessions, effContextBuilder, effProvider, and
-// effModel onto processOptions and thread them through the turn execution
-// path so each tenant's turn runs against an isolated session store, context
-// builder, and provider credential set.
+// PHASE 2 (shipped): each tenant resolves to an isolated AgentInstance with
+// its own workspace, session store, ContextBuilder, Tools and Provider. See
+// agent_tenant_registry.go for the cache and construction path; the per-turn
+// allowlists here remain as defense-in-depth.
 
 package agent
 

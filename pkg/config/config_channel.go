@@ -39,7 +39,10 @@ const (
 	ChannelTeamsWebHook   = "teams_webhook"
 	ChannelMQTT           = "mqtt"
 	ChannelSlackWebHook   = "slack_webhook"
-	// ChannelMagicForm is a fork-only channel; see MAGICFORM_CUSTOMIZATIONS.md.
+	// ChannelNuestra is the fork-only channel implementing the Nuestra Agent
+	// platform webhook protocol. ChannelMagicForm is a brand alias for it and
+	// remains valid in existing configs. See NUESTRA_CUSTOMIZATIONS.md.
+	ChannelNuestra   = "nuestra"
 	ChannelMagicForm = "magicform"
 )
 
@@ -684,7 +687,10 @@ var channelSettingsFactory = map[string]any{
 	ChannelTeamsWebHook:   (TeamsWebhookSettings{}),
 	ChannelMQTT:           (MQTTSettings{}),
 	ChannelSlackWebHook:   (SlackWebhookSettings{}),
-	ChannelMagicForm:      (MagicFormSettings{}),
+	ChannelNuestra:        (NuestraSettings{}),
+	// ChannelMagicForm is the original brand alias; both types decode into the
+	// same struct, so existing "type": "magicform" configs keep working.
+	ChannelMagicForm: (NuestraSettings{}),
 }
 
 // RegisterChannelSettings registers a settings struct prototype for a custom
@@ -754,6 +760,7 @@ func InitChannelList(channels ChannelsConfig) error {
 				// Non-fatal: some env vars may not apply
 			}
 			applyTelegramStreamingEnvCompat(target)
+			applyNuestraEnv(name, target)
 			if err := validateChannelStreamingConfig(name, target); err != nil {
 				return err
 			}
@@ -766,6 +773,110 @@ func InitChannelList(channels ChannelsConfig) error {
 	}
 
 	return nil
+}
+
+// nuestraEnvPrefix builds the env var prefix for one channel instance from its
+// key in the channels map: "magicform" -> "PICOCLAW_CHANNELS_MAGICFORM_".
+//
+// Characters that cannot appear in an env var name become underscores, and runs
+// of them collapse to a single separator, so "brand-two", "brand.two" and
+// "brand--two" all resolve to PICOCLAW_CHANNELS_BRAND_TWO_* rather than leaving
+// a double underscore an operator would have to guess at.
+func nuestraEnvPrefix(channelName string) string {
+	var b strings.Builder
+	b.WriteString("PICOCLAW_CHANNELS_")
+
+	pendingSep := false
+	wrote := false
+	for _, r := range strings.ToUpper(channelName) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			// Emit a separator only once a following character earns it, so
+			// leading and trailing runs are dropped rather than doubling up on
+			// the prefix and suffix underscores.
+			if pendingSep && wrote {
+				b.WriteByte('_')
+			}
+			b.WriteRune(r)
+			pendingSep = false
+			wrote = true
+			continue
+		}
+		pendingSep = true
+	}
+
+	// A key with nothing usable in it has no sensible variable name; callers
+	// fall back to the brand-neutral prefix.
+	if !wrote {
+		return ""
+	}
+
+	b.WriteByte('_')
+	return b.String()
+}
+
+// nuestraEnvNeutralPrefix is the brand-neutral env prefix. A deployment running
+// a single Nuestra channel - the common case, one brand per container - sets
+// PICOCLAW_CHANNELS_NUESTRA_TOKEN and never names its brand in the environment.
+const nuestraEnvNeutralPrefix = "PICOCLAW_CHANNELS_NUESTRA_"
+
+// lookupNuestraEnv resolves one setting for a channel instance, preferring the
+// key-scoped variable and falling back to the brand-neutral one. An empty
+// prefix means the key yielded no usable variable name, so only the neutral
+// form is consulted - never a bare, unprefixed name like TOKEN.
+func lookupNuestraEnv(prefix, suffix string) (string, bool) {
+	if prefix != "" {
+		if raw, ok := os.LookupEnv(prefix + suffix); ok {
+			return raw, true
+		}
+	}
+	return os.LookupEnv(nuestraEnvNeutralPrefix + suffix)
+}
+
+// applyNuestraEnv applies env overrides to one Nuestra channel instance, keyed
+// by the channel's name rather than by struct type, so secrets stay in the
+// deployment environment instead of config.json.
+//
+// Two forms are accepted per setting, key-scoped winning over neutral:
+//
+//	PICOCLAW_CHANNELS_<KEY>_TOKEN   scoped to the channel keyed <KEY>
+//	PICOCLAW_CHANNELS_NUESTRA_TOKEN applies to any Nuestra channel
+//
+// The neutral form covers one-brand-per-deployment. The key-scoped form is only
+// needed when several brands share a process, where it keeps each brand's token
+// and webhook path from overwriting another's.
+//
+// Tag-based binding via env.Parse cannot express either: it resolves names from
+// the struct type, which every instance shares.
+func applyNuestraEnv(channelName string, target any) {
+	settings, ok := target.(*NuestraSettings)
+	if !ok || settings == nil {
+		return
+	}
+
+	prefix := nuestraEnvPrefix(channelName)
+
+	if raw, ok := lookupNuestraEnv(prefix, "TOKEN"); ok && raw != "" {
+		settings.SetToken(raw)
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "BACKEND_URL"); ok {
+		settings.BackendURL = raw
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "WEBHOOK_PATH"); ok {
+		settings.WebhookPath = raw
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "WORKSPACE_ROOT"); ok {
+		settings.WorkspaceRoot = raw
+	}
+	if raw, ok := lookupNuestraEnv(prefix, "ALLOW_FROM"); ok {
+		parts := strings.Split(raw, ",")
+		allow := make(FlexibleStringSlice, 0, len(parts))
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				allow = append(allow, p)
+			}
+		}
+		settings.AllowFrom = allow
+	}
 }
 
 func applyTelegramStreamingEnvCompat(target any) {
