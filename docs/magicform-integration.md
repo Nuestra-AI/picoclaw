@@ -117,8 +117,9 @@ PICOCLAW_CHANNELS_MAGICFORM_TOKEN=magicform-secret
 PICOCLAW_CHANNELS_OTHERBRAND_TOKEN=otherbrand-secret
 ```
 
-Non-alphanumeric characters in a key become underscores, so a channel keyed
-`brand-two` reads `PICOCLAW_CHANNELS_BRAND_TWO_TOKEN`.
+Non-alphanumeric characters in a key become underscores and runs collapse to a
+single separator, so `brand-two`, `brand.two` and `brand--two` all read
+`PICOCLAW_CHANNELS_BRAND_TWO_TOKEN`.
 
 > **Set a token per brand.** Brands sharing a process must each get their own
 > key-scoped token and `webhook_path`. A neutral token would otherwise be shared

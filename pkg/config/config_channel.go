@@ -777,18 +777,39 @@ func InitChannelList(channels ChannelsConfig) error {
 
 // nuestraEnvPrefix builds the env var prefix for one channel instance from its
 // key in the channels map: "magicform" -> "PICOCLAW_CHANNELS_MAGICFORM_".
-// Characters that cannot appear in an env var name become underscores, so a
-// key like "brand-two" resolves to PICOCLAW_CHANNELS_BRAND_TWO_*.
+//
+// Characters that cannot appear in an env var name become underscores, and runs
+// of them collapse to a single separator, so "brand-two", "brand.two" and
+// "brand--two" all resolve to PICOCLAW_CHANNELS_BRAND_TWO_* rather than leaving
+// a double underscore an operator would have to guess at.
 func nuestraEnvPrefix(channelName string) string {
 	var b strings.Builder
 	b.WriteString("PICOCLAW_CHANNELS_")
+
+	pendingSep := false
+	wrote := false
 	for _, r := range strings.ToUpper(channelName) {
 		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			// Emit a separator only once a following character earns it, so
+			// leading and trailing runs are dropped rather than doubling up on
+			// the prefix and suffix underscores.
+			if pendingSep && wrote {
+				b.WriteByte('_')
+			}
 			b.WriteRune(r)
-		} else {
-			b.WriteRune('_')
+			pendingSep = false
+			wrote = true
+			continue
 		}
+		pendingSep = true
 	}
+
+	// A key with nothing usable in it has no sensible variable name; callers
+	// fall back to the brand-neutral prefix.
+	if !wrote {
+		return ""
+	}
+
 	b.WriteByte('_')
 	return b.String()
 }
@@ -799,10 +820,14 @@ func nuestraEnvPrefix(channelName string) string {
 const nuestraEnvNeutralPrefix = "PICOCLAW_CHANNELS_NUESTRA_"
 
 // lookupNuestraEnv resolves one setting for a channel instance, preferring the
-// key-scoped variable and falling back to the brand-neutral one.
+// key-scoped variable and falling back to the brand-neutral one. An empty
+// prefix means the key yielded no usable variable name, so only the neutral
+// form is consulted - never a bare, unprefixed name like TOKEN.
 func lookupNuestraEnv(prefix, suffix string) (string, bool) {
-	if raw, ok := os.LookupEnv(prefix + suffix); ok {
-		return raw, true
+	if prefix != "" {
+		if raw, ok := os.LookupEnv(prefix + suffix); ok {
+			return raw, true
+		}
 	}
 	return os.LookupEnv(nuestraEnvNeutralPrefix + suffix)
 }
