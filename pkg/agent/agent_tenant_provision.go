@@ -1,6 +1,6 @@
 // PicoClaw - Bootstrap-file copy for first-time tenant workspaces.
 //
-// When MagicForm sends an inbound message with config_dir + workspace
+// When a channel sends an inbound message with config_dir + workspace
 // hints and that tenant's workspace doesn't yet exist, we copy a small
 // set of bootstrap files (AGENT.md, USER.md, SOUL.md, IDENTITY.md, the
 // skills/ tree, and scripts/) from the operator-managed config_dir into

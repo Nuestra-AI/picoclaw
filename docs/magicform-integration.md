@@ -86,18 +86,44 @@ The `token` field is a `SecureString`: it is **not** stored in `config.json` in 
 
 The recommended approach is to set `workspace_root` once in `agents.defaults` so that it applies to both the CLI and all gateway channels. Use the channel-level `workspace_root` only if MagicForm needs a different root than other entry points.
 
-Most settings can be set via environment variables:
+Most settings can be set via environment variables. Use the brand-neutral form
+— it applies to whichever Nuestra channel is configured, so a one-brand
+deployment never names its brand in the environment:
 
 ```bash
-PICOCLAW_CHANNELS_MAGICFORM_TOKEN=your-shared-secret
-PICOCLAW_CHANNELS_MAGICFORM_BACKEND_URL=https://api.magicform.example.com
-PICOCLAW_CHANNELS_MAGICFORM_WEBHOOK_PATH=/hooks/magicform
-PICOCLAW_CHANNELS_MAGICFORM_WORKSPACE_ROOT=/data/workspaces
-PICOCLAW_CHANNELS_MAGICFORM_ALLOW_FROM=sender1,sender2
+PICOCLAW_CHANNELS_NUESTRA_TOKEN=your-shared-secret
+PICOCLAW_CHANNELS_NUESTRA_BACKEND_URL=https://api.magicform.example.com
+PICOCLAW_CHANNELS_NUESTRA_WEBHOOK_PATH=/hooks/magicform
+PICOCLAW_CHANNELS_NUESTRA_WORKSPACE_ROOT=/data/workspaces
+PICOCLAW_CHANNELS_NUESTRA_ALLOW_FROM=sender1,sender2
 PICOCLAW_AGENTS_DEFAULTS_WORKSPACE_ROOT=/data/workspaces
 ```
 
-The `enabled` flag and `type` are not env-bindable — set them in `config.json` (or YAML). Setting `PICOCLAW_CHANNELS_MAGICFORM_TOKEN` populates the secure store entry on next save.
+The `enabled` flag and `type` are not env-bindable — set them in `config.json` (or YAML). Setting the token env var populates the secure store entry on next save.
+
+### Several brands in one process
+
+Each brand is normally its own deployment, so the neutral form above is enough.
+When several brands do share a process, give each one a **key-scoped** variable
+named after its key in `channel_list`. The key-scoped form wins over the neutral
+one, so the neutral var can still carry values common to every brand:
+
+```bash
+# Shared by both brands
+PICOCLAW_CHANNELS_NUESTRA_BACKEND_URL=https://api.example.com
+
+# Per-brand secrets; keys are "magicform" and "otherbrand"
+PICOCLAW_CHANNELS_MAGICFORM_TOKEN=magicform-secret
+PICOCLAW_CHANNELS_OTHERBRAND_TOKEN=otherbrand-secret
+```
+
+Non-alphanumeric characters in a key become underscores and runs collapse to a
+single separator, so `brand-two`, `brand.two` and `brand--two` all read
+`PICOCLAW_CHANNELS_BRAND_TWO_TOKEN`.
+
+> **Set a token per brand.** Brands sharing a process must each get their own
+> key-scoped token and `webhook_path`. A neutral token would otherwise be shared
+> by every brand, and two brands on one webhook path cannot both receive traffic.
 
 ### Start the gateway
 

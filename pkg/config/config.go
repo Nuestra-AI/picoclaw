@@ -653,18 +653,39 @@ type WeComSettings struct {
 	Streaming           StreamingConfig `json:"streaming,omitzero"      yaml:"-"`
 }
 
-// MagicFormSettings configures the MagicForm webhook channel for tenant-aware
-// callback-based message dispatch.
-type MagicFormSettings struct {
-	Token         SecureString        `json:"token,omitzero"           yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_MAGICFORM_TOKEN"`
-	BackendURL    string              `json:"backend_url"              yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_BACKEND_URL"`
-	WebhookPath   string              `json:"webhook_path"             yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_WEBHOOK_PATH"`
-	WorkspaceRoot string              `json:"workspace_root,omitempty" yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_WORKSPACE_ROOT"`
-	AllowFrom     FlexibleStringSlice `json:"allow_from,omitempty"     yaml:"-"               env:"PICOCLAW_CHANNELS_MAGICFORM_ALLOW_FROM"`
+// NuestraSettings configures a channel speaking the Nuestra Agent platform
+// webhook protocol. One process can run several instances of it, one per
+// brand, each with its own token, webhook path, and callback target:
+//
+//	"channel_list": {
+//	  "magicform":  {"type": "nuestra", "enabled": true,
+//	                 "settings": {"webhook_path": "/hooks/magicform"}},
+//	  "otherbrand": {"type": "nuestra", "enabled": true,
+//	                 "settings": {"webhook_path": "/hooks/otherbrand"}}
+//	}
+//
+// Fields carry no `env` struct tag on purpose. Tag-based binding is applied per
+// struct type, not per channel instance, so one PICOCLAW_CHANNELS_MAGICFORM_*
+// value would be stamped onto every configured brand, overwriting each brand's
+// own token and webhook path. Env overrides are instead resolved per instance
+// from the channel key - see applyNuestraEnv.
+type NuestraSettings struct {
+	Token         SecureString        `json:"token,omitzero"           yaml:"token,omitempty"`
+	BackendURL    string              `json:"backend_url"              yaml:"-"`
+	WebhookPath   string              `json:"webhook_path"             yaml:"-"`
+	WorkspaceRoot string              `json:"workspace_root,omitempty" yaml:"-"`
+	AllowFrom     FlexibleStringSlice `json:"allow_from,omitempty"     yaml:"-"`
 }
 
-// SetToken sets the MagicForm token and marks it as dirty for security saving
-func (c *MagicFormSettings) SetToken(token string) {
+// MagicFormSettings is a backward-compatible alias for NuestraSettings.
+//
+// Deprecated: use NuestraSettings. MagicForm is one brand served by the
+// Nuestra Agent platform channel, not a protocol of its own. Retained so
+// existing code and configs keep compiling and decoding unchanged.
+type MagicFormSettings = NuestraSettings
+
+// SetToken sets the channel token and marks it as dirty for security saving
+func (c *NuestraSettings) SetToken(token string) {
 	c.Token = *NewSecureString(token)
 }
 

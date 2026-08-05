@@ -30,7 +30,7 @@ func writeSkill(t *testing.T, workspace, name, description string) {
 // containsSkillWildcard shim in buildSystemPromptParts a ["*"] allowlist would
 // match only a skill literally named "*" and silently produce an EMPTY skill
 // catalog. That failure mode is invisible at runtime, hence this test.
-// See MAGICFORM_CUSTOMIZATIONS.md entry 2.
+// See NUESTRA_CUSTOMIZATIONS.md entry 2.
 func TestSkillsFilterWildcardIncludesAllSkills(t *testing.T) {
 	workspace := t.TempDir()
 	writeSkill(t, workspace, "alpha", "first skill")
