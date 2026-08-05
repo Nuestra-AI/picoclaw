@@ -31,10 +31,11 @@ func newChannel(
 	if err != nil {
 		return nil, err
 	}
-	// Instances named after their brand ("magicform", "otherbrand", ...) carry
-	// that name; only the bare default type keeps the channel's own name.
-	if channelName != config.ChannelMagicForm && channelName != config.ChannelNuestra {
-		ch.SetName(channelName)
-	}
+	// NewMagicFormChannel seeds the base name with the legacy "magicform"
+	// default, so every instance is renamed to its config key. Logs, security
+	// warnings, and health routing all key off the channel name, and a channel
+	// keyed "nuestra" or "otherbrand" reporting itself as "magicform" would be
+	// indistinguishable from the brand instance.
+	ch.SetName(channelName)
 	return ch, nil
 }

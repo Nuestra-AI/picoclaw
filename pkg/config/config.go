@@ -657,9 +657,11 @@ type WeComSettings struct {
 // webhook protocol. One process can run several instances of it, one per
 // brand, each with its own token, webhook path, and callback target:
 //
-//	"channels": {
-//	  "magicform":  {"type": "nuestra", "webhook_path": "/hooks/magicform"},
-//	  "otherbrand": {"type": "nuestra", "webhook_path": "/hooks/otherbrand"}
+//	"channel_list": {
+//	  "magicform":  {"type": "nuestra", "enabled": true,
+//	                 "settings": {"webhook_path": "/hooks/magicform"}},
+//	  "otherbrand": {"type": "nuestra", "enabled": true,
+//	                 "settings": {"webhook_path": "/hooks/otherbrand"}}
 //	}
 //
 // Fields carry no `env` struct tag on purpose. Tag-based binding is applied per

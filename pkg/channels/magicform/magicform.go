@@ -148,26 +148,41 @@ func (c *MagicFormChannel) Stop(_ context.Context) error {
 	return nil
 }
 
-// WebhookPath returns the HTTP path for the inbound webhook.
+// pathName returns the channel name to build default HTTP paths from, falling
+// back to the legacy "magicform" default if the name was never set. Instances
+// are named after their config key, so brands sharing a process get distinct
+// paths instead of colliding on one.
+func (c *MagicFormChannel) pathName() string {
+	if name := c.Name(); name != "" {
+		return name
+	}
+	return config.ChannelMagicForm
+}
+
+// WebhookPath returns the HTTP path for the inbound webhook. An explicit
+// webhook_path in the channel settings always wins; the default is derived from
+// the channel name so a second brand does not silently share the first's path.
 func (c *MagicFormChannel) WebhookPath() string {
 	if c.settings.WebhookPath != "" {
 		return c.settings.WebhookPath
 	}
-	return "/hooks/magicform"
+	return "/hooks/" + c.pathName()
 }
 
-// HealthPath returns the HTTP path for the health check endpoint.
+// HealthPath returns the HTTP path for the health check endpoint. Derived from
+// the channel name: a fixed path would let one brand's handler overwrite
+// another's, leaving the health check reporting on only one of them.
 func (c *MagicFormChannel) HealthPath() string {
-	return "/health/magicform"
+	return "/health/" + c.pathName()
 }
 
 // HealthHandler handles the health check HTTP request.
 func (c *MagicFormChannel) HealthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":  "ok",
-		"channel": "magicform",
+		"channel": c.pathName(),
 	})
 }
 
