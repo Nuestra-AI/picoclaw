@@ -2047,12 +2047,17 @@ func mergeAgentDefaults(dst, src *AgentDefaults) error {
 		}
 		dst.Workspace = src.Workspace
 	}
+	// Only tightening merges: an overlay may set RestrictToWorkspace true but
+	// cannot clear it.
 	if src.RestrictToWorkspace {
 		dst.RestrictToWorkspace = true
 	}
-	if src.AllowReadOutsideWorkspace {
-		dst.AllowReadOutsideWorkspace = true
-	}
+	// AllowReadOutsideWorkspace is intentionally NOT copied. It is the only
+	// input that can clear the read boundary (readRestrict in
+	// pkg/agent/instance.go), and tenant workspaces are siblings under
+	// workspace_root, so honoring it from an overlay would let one tenant's
+	// config grant itself reads into another's workspace. Same reasoning as
+	// WorkspaceRoot below: a boundary the base config owns.
 	if src.Provider != "" {
 		dst.Provider = src.Provider
 	}
