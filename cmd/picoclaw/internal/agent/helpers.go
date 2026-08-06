@@ -21,7 +21,7 @@ import (
 )
 
 func agentCmd(message, sessionKey, model string, debug bool,
-	workspace, configDir, toolsFlag, skillsFlag string,
+	workspace, configDir, toolsFlag, skillsFlag string, refresh bool,
 ) error {
 	if sessionKey == "" {
 		sessionKey = "agent:main:cli:default"
@@ -110,7 +110,17 @@ func agentCmd(message, sessionKey, model string, debug bool,
 
 	// Copy bootstrap files from config-dir to workspace
 	if configDir != "" {
-		copyBootstrapFiles(configDir, cfg.Agents.Defaults.Workspace)
+		skipped, err := agent.CopyBootstrapFiles(configDir, cfg.Agents.Defaults.Workspace, refresh)
+		if err != nil {
+			// Copying stops at the first failure, so later items may not have
+			// been written. Surface it instead of leaving a half-seeded
+			// workspace to fail confusingly on the first turn.
+			return fmt.Errorf("error copying bootstrap files from --config-dir: %w", err)
+		}
+		for _, item := range skipped {
+			fmt.Fprintf(os.Stderr,
+				"Warning: kept existing %s (differs from --config-dir; use --refresh to overwrite)\n", item)
+		}
 	}
 
 	// Print agent startup info (only for interactive mode)
@@ -210,23 +220,6 @@ func validateWorkspacePaths(workspaceRoot, workspace, configDir string) (string,
 		configDir = resolved
 	}
 	return workspace, configDir, nil
-}
-
-// copyBootstrapFiles copies recognized bootstrap files (AGENTS.md, IDENTITY.md,
-// SOUL.md, USER.md) from srcDir into the workspace directory.
-func copyBootstrapFiles(srcDir, workspace string) {
-	bootstrapFiles := []string{"AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md"}
-	for _, filename := range bootstrapFiles {
-		srcPath := filepath.Join(srcDir, filename)
-		data, err := os.ReadFile(srcPath)
-		if err != nil {
-			continue // file not present in config-dir, skip
-		}
-		dstPath := filepath.Join(workspace, filename)
-		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to write %s: %v\n", dstPath, err)
-		}
-	}
 }
 
 func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {

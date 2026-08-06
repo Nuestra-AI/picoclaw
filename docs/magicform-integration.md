@@ -20,10 +20,12 @@ MagicForm pre-provisions directories on disk before calling PicoClaw (see [cli.m
   {stackId}/
     config/                    # configDir -- shared per-stack
       config.json              # API key, model, agent settings for this stack
-      AGENTS.md                # Agent instructions (optional)
+      AGENT.md                 # Agent instructions (optional; AGENTS.md is the legacy name)
       IDENTITY.md              # Agent identity (optional)
       SOUL.md                  # Agent personality (optional)
       USER.md                  # User context (optional)
+      skills/                  # Bootstrap skills tree (optional)
+      scripts/                 # Bootstrap scripts tree (optional)
     {conversationId}/          # workspace -- per-conversation
       sessions/                # Conversation history (managed by PicoClaw)
       memory/                  # Persistent agent memory (managed by PicoClaw)

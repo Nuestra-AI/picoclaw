@@ -65,10 +65,28 @@ Interact with the agent directly. Without `-m`, starts an interactive REPL. With
 | `--session` | `-s` | `""` (→ `agent:main:cli:default`) | Session key for conversation isolation (e.g. `stackId:conversationId`). |
 | `--model` | | | Override model name from config. |
 | `--workspace` | | | Agent workspace directory, relative to `workspace_root`. Resolved to an absolute path before use. |
-| `--config-dir` | | | Config directory (relative to `workspace_root`) containing `config.json` and bootstrap files (`AGENTS.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`). |
+| `--config-dir` | | | Config directory (relative to `workspace_root`) containing `config.json` and bootstrap files (`AGENT.md` or `AGENTS.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `skills/`, `scripts/`). |
+| `--refresh` | | `false` | Overwrite workspace bootstrap files that differ from `--config-dir`. By default existing files are kept and reported. |
 | `--tools` | | | Comma-separated tool allowlist (e.g. `read_file,web_fetch`). Only these tools are enabled. |
 | `--skills` | | | Comma-separated skill filter (e.g. `summarize,translate`). Only these skills are loaded. |
 | `--debug` | `-d` | `false` | Enable debug logging. |
+
+### Bootstrap files
+
+`--config-dir` seeds the workspace with `AGENT.md` or `AGENTS.md`, `IDENTITY.md`,
+`SOUL.md`, `USER.md`, `skills/`, and `scripts/`. Missing items are skipped, so a
+config directory need not populate every slot.
+
+Both agent-definition formats are copied when present. The runtime prefers the
+structured `AGENT.md` (parsed frontmatter, paired `SOUL.md`, tool allowlist) and
+falls back to the legacy `AGENTS.md`; when both exist in a workspace, `AGENT.md`
+wins and a log line records that `AGENTS.md` was ignored.
+
+Existing workspace files are **kept**, not overwritten. A file that differs from
+its `--config-dir` counterpart is reported on stderr and left alone; pass
+`--refresh` to overwrite. Files identical to the source are never reported. This
+matches how the gateway provisions tenant workspaces, so the same config
+directory yields the same workspace whichever path seeded it.
 
 ### Config Precedence (highest wins)
 
@@ -317,10 +335,12 @@ PicoClaw uses the following workspace directory structure for per-tenant/per-con
   {stackId}/
     config/                    # configDir -- shared per-stack
       config.json              # API key, model, agent settings
-      AGENTS.md                # Agent instructions (optional)
+      AGENT.md                 # Agent instructions (optional; AGENTS.md is the legacy name)
       IDENTITY.md              # Agent identity (optional)
       SOUL.md                  # Agent personality (optional)
       USER.md                  # User context (optional)
+      skills/                  # Bootstrap skills tree (optional)
+      scripts/                 # Bootstrap scripts tree (optional)
     {conversationId}/          # workspace -- per-conversation
       sessions/                # Conversation history (managed by PicoClaw)
       memory/                  # Persistent agent memory (managed by PicoClaw)
