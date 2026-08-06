@@ -2,9 +2,9 @@
 //
 // This file is the Nuestra fork's primary multi-tenancy implementation
 // on top of upstream's agent registry. It provisions a fresh AgentInstance
-// per tenant the first time we see one (keyed by tenant ID derived from
-// stack_id + workspace), caches it, and routes inbound tenant messages to
-// the right instance.
+// per tenant the first time we see one (keyed by workspace + config_dir --
+// see tenantKey; stack_id scopes the session key, not tenant identity),
+// caches it, and routes inbound tenant messages to the right instance.
 //
 // Why a separate registry rather than mutating upstream's AgentRegistry:
 //

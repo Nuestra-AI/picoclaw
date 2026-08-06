@@ -9,7 +9,9 @@
   ],
   "agents": {
     "defaults": {
-      "model_name": "tenant-main"
+      "model_name": "tenant-main",
+      "max_tokens": 4096,
+      "max_tool_iterations": 10
     }
   }
 }

@@ -85,6 +85,13 @@ func loadAgentDefinition(workspace string) AgentContextDefinition {
 		prompt := parseAgentPromptDefinition(agentPath, string(content))
 		definition.Source = AgentDefinitionSourceAgent
 		definition.Agent = &prompt
+		// Both formats present: AGENT.md wins and AGENTS.md is ignored. A
+		// workspace previously running from the legacy file changes prompt
+		// silently once AGENT.md appears, so record which one won.
+		if fileExists(filepath.Join(workspace, string(AgentDefinitionSourceAgents))) {
+			logger.InfoCF("agent", "Both AGENT.md and AGENTS.md present; using AGENT.md",
+				map[string]any{"workspace": workspace, "ignored": string(AgentDefinitionSourceAgents)})
+		}
 		soulPath := filepath.Join(workspace, "SOUL.md")
 		if content, err := os.ReadFile(soulPath); err == nil {
 			definition.Soul = &SoulDefinition{
