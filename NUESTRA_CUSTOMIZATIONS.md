@@ -139,6 +139,19 @@ forward-ported.
   `Config.MergeWorkspaceConfig`.
 - **Owns:** `pkg/config/config.go::MergeWorkspaceConfig` and
   `mergeAgentDefaults` (fork additions; not in upstream).
+- **Boundary fields an overlay cannot set** (`mergeAgentDefaults`, covered by
+  `pkg/config/nuestra_overlay_test.go`):
+  - `workspace_root` — not copied; the root that separates tenants.
+  - `allow_read_outside_workspace` — not copied. It is the only input that
+    clears `readRestrict` (`pkg/agent/instance.go`), and tenant workspaces are
+    siblings under `workspace_root`, so an overlay that set it could read
+    across tenants. A `config_dir` is itself selected per request, so this was
+    reachable from the same payload that routes a tenant.
+  - `restrict_to_workspace` — merges only when `true`; an overlay may tighten
+    but never clear it.
+- **Sync note:** if upstream adds a negative (permission-granting) boolean to
+  `AgentDefaults`, it must be excluded here too. The "merge only when true"
+  idiom is fail-safe for positive flags and fail-open for negative ones.
 
 ### 5. Tool hardening (filesystem)
 - **Owns:** customizations in `pkg/tools/fs/filesystem.go::sandboxFs.WriteFile`:

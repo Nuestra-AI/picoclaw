@@ -70,6 +70,28 @@ echo "You are Acme's customer support assistant." \
   > /data/workspaces/tenant-acme/config/AGENT.md
 ```
 
+#### What a tenant overlay can and cannot change
+
+The overlay is merged field-by-field over the gateway's base config, and only
+non-empty fields apply. Boundary fields are the exceptions:
+
+- **`workspace_root` is ignored.** It is the security boundary that keeps
+  tenants apart, so it can only be set in the gateway's base config. Putting it
+  in a tenant overlay silently does nothing.
+- **`allow_read_outside_workspace` is ignored.** It is the only setting that
+  can clear the read boundary, and tenant workspaces are siblings under
+  `workspace_root` — an overlay that could set it would let one tenant read
+  another's files. Base config only. (Fork change; upstream honors it from
+  overlays.)
+- **`workspace` is validated, not trusted.** An overlay may point a tenant at a
+  different workspace, but the path is resolved against `workspace_root` and
+  rejected if it escapes.
+- **`restrict_to_workspace` merges only when `true`.** An overlay can tighten
+  it but never clear it.
+
+Everything else — `model_name`, `max_tokens`, `temperature`, `provider`,
+`max_tool_iterations`, and the rest — overrides normally when set.
+
 ### 5. Set secrets via env
 
 The channel's shared secret is a `SecureString`; set it via env, not config.json:
