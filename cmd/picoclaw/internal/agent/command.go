@@ -4,6 +4,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// configDirUsage documents --config-dir. The bootstrap file list mirrors
+// pkg/agent.bootstrapItems, which both provisioning paths share.
+const configDirUsage = "Directory containing config.json (model/agent/tool overrides) and " +
+	"bootstrap files (AGENT.md or AGENTS.md, IDENTITY.md, SOUL.md, USER.md, skills/, scripts/)"
+
 func NewAgentCommand() *cobra.Command {
 	var (
 		message    string
@@ -15,6 +20,7 @@ func NewAgentCommand() *cobra.Command {
 		configDir string
 		tools     string
 		skills    string
+		refresh   bool
 	)
 
 	cmd := &cobra.Command{
@@ -23,7 +29,7 @@ func NewAgentCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return agentCmd(message, sessionKey, model, debug,
-				workspace, configDir, tools, skills)
+				workspace, configDir, tools, skills, refresh)
 		},
 	}
 
@@ -35,8 +41,9 @@ func NewAgentCommand() *cobra.Command {
 
 	// Workspace and config overrides
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Override agent workspace directory")
-	cmd.Flags().
-		StringVar(&configDir, "config-dir", "", "Directory containing config.json (model/agent/tool overrides) and bootstrap files (AGENTS.md, IDENTITY.md, SOUL.md, USER.md)")
+	cmd.Flags().StringVar(&configDir, "config-dir", "", configDirUsage)
+	cmd.Flags().BoolVar(&refresh, "refresh", false,
+		"Overwrite workspace bootstrap files that differ from --config-dir (default: keep existing)")
 	cmd.Flags().StringVar(&tools, "tools", "", "Comma-separated tool allowlist (only these tools enabled)")
 	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated skill filter (only these skills loaded)")
 

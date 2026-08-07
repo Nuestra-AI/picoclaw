@@ -20,6 +20,7 @@
 package agent
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -28,12 +29,19 @@ import (
 	"strings"
 )
 
-// bootstrapItems lists the files and directories provisionBootstrapFiles
-// will copy from configDir into the tenant workspace. Items are looked up
-// relative to configDir; missing items are skipped silently because not
-// every operator chooses to populate every slot.
+// bootstrapItems lists the files and directories copied from configDir into
+// a tenant workspace. Items are relative to configDir; missing items are
+// skipped.
+//
+// Shared by both provisioning paths: the gateway (provisionBootstrapFiles)
+// and the CLI (CopyBootstrapFiles), so one config_dir yields one workspace
+// layout either way.
+//
+// Both AGENT.md and AGENTS.md are listed because both are live formats;
+// loadAgentDefinition prefers AGENT.md and falls back to AGENTS.md.
 var bootstrapItems = []string{
 	"AGENT.md",
+	"AGENTS.md",
 	"USER.md",
 	"SOUL.md",
 	"IDENTITY.md",
@@ -41,60 +49,97 @@ var bootstrapItems = []string{
 	"scripts",
 }
 
-// provisionBootstrapFiles copies the bootstrapItems from configDir into
-// workspace. Files that already exist in workspace are left alone
-// (idempotent). Returns the first error encountered; partial copies are
-// allowed to remain so the caller can decide whether the tenant agent is
-// usable enough to proceed.
-//
-// Both arguments must be absolute paths already resolved against the
-// workspace_root boundary by the caller (extractTenantOverrides handles
-// this).
+// provisionBootstrapFiles copies bootstrapItems from configDir into
+// workspace, leaving existing files alone. Returns the first error
+// encountered; partial copies remain so the caller can decide whether the
+// tenant agent is usable.
 func provisionBootstrapFiles(configDir, workspace string) error {
+	_, err := provisionBootstrap(configDir, workspace, false)
+	return err
+}
+
+// provisionBootstrap copies bootstrapItems from configDir into workspace.
+// When refresh is true, existing files whose content differs from the source
+// are overwritten; otherwise they are preserved and returned as skipped
+// (workspace-relative). Identical files are never reported.
+//
+// Both paths are made absolute here rather than trusting the caller: the CLI
+// does not always have a validated workspace, and a relative one would fail
+// the containment check for every item and silently copy nothing.
+//
+// A differing file cannot be told apart from a deliberate operator edit,
+// which is why the default preserves and reports rather than overwrites.
+func provisionBootstrap(configDir, workspace string, refresh bool) ([]string, error) {
 	if configDir == "" || workspace == "" {
-		return errors.New("provisionBootstrapFiles: configDir and workspace must be non-empty")
+		return nil, errors.New("provisionBootstrap: configDir and workspace must be non-empty")
+	}
+	configDir, err := filepath.Abs(configDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config dir: %w", err)
+	}
+	workspace, err = filepath.Abs(workspace)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		return fmt.Errorf("create workspace dir: %w", err)
+		return nil, fmt.Errorf("create workspace dir: %w", err)
 	}
+	var skipped []string
 	for _, item := range bootstrapItems {
 		src := filepath.Join(configDir, item)
 		dst := filepath.Join(workspace, item)
 
-		// Reject anything that would escape the workspace via symlink or
-		// crafted item name. filepath.Join cleans `..` but a malicious
-		// item value containing platform-specific separators could still
-		// produce a surprising path; keep an explicit prefix check.
-		if !strings.HasPrefix(dst, workspace) {
-			return fmt.Errorf("bootstrap item %q resolves outside workspace", item)
+		// Reject anything resolving outside the workspace. The trailing
+		// separator is required: without it a workspace of /data/ws accepts
+		// the sibling /data/ws-evil/x. Matches pathutil.ResolveWorkspacePath.
+		if !strings.HasPrefix(dst, workspace+string(filepath.Separator)) {
+			return nil, fmt.Errorf("bootstrap item %q resolves outside workspace", item)
 		}
 
-		info, err := os.Stat(src)
+		// Lstat, not Stat: a source item that is itself a symlink must not be
+		// followed. configDir can be tenant-supplied, so a link such as
+		// AGENT.md -> /etc/passwd would otherwise be copied into the
+		// workspace and become readable through in-workspace tools. Matches
+		// the rule copyDir already applies inside the tree.
+		info, err := os.Lstat(src)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("stat %q: %w", src, err)
+			return nil, fmt.Errorf("stat %q: %w", src, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
 
 		if info.IsDir() {
-			if err := copyDirIdempotent(src, dst); err != nil {
-				return fmt.Errorf("copy dir %q: %w", item, err)
+			dirSkipped, err := copyDir(workspace, src, dst, refresh)
+			if err != nil {
+				return nil, fmt.Errorf("copy dir %q: %w", item, err)
+			}
+			for _, rel := range dirSkipped {
+				skipped = append(skipped, filepath.Join(item, rel))
 			}
 		} else {
-			if err := copyFileIfAbsent(src, dst, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("copy file %q: %w", item, err)
+			wasSkipped, err := copyFile(workspace, src, dst, info.Mode().Perm(), refresh)
+			if err != nil {
+				return nil, fmt.Errorf("copy file %q: %w", item, err)
+			}
+			if wasSkipped {
+				skipped = append(skipped, item)
 			}
 		}
 	}
-	return nil
+	return skipped, nil
 }
 
-// copyDirIdempotent walks src and mirrors files into dst that don't
-// already exist. It does not delete files that exist in dst but not src
-// (we treat dst as the operator's editable surface).
-func copyDirIdempotent(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+// copyDir walks src and mirrors files into dst, never deleting files present
+// in dst but not src (dst is the operator's editable surface). Returns the
+// src-relative paths left untouched because they exist with differing
+// content.
+func copyDir(workspace, src, dst string, refresh bool) ([]string, error) {
+	var skipped []string
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -104,6 +149,11 @@ func copyDirIdempotent(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
+			// MkdirAll follows an existing symlinked component, so check
+			// before creating.
+			if linkErr := assertNoSymlinkedParent(workspace, target); linkErr != nil {
+				return linkErr
+			}
 			return os.MkdirAll(target, info.Mode().Perm())
 		}
 		// Skip symlinks: we don't want to follow operator-set links that
@@ -112,25 +162,52 @@ func copyDirIdempotent(src, dst string) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
-		return copyFileIfAbsent(path, target, info.Mode().Perm())
+		wasSkipped, err := copyFile(workspace, path, target, info.Mode().Perm(), refresh)
+		if err != nil {
+			return err
+		}
+		if wasSkipped {
+			skipped = append(skipped, rel)
+		}
+		return nil
 	})
+	return skipped, err
 }
 
-// copyFileIfAbsent copies src→dst only if dst doesn't already exist.
-// Preserves the source mode (within umask). 0o600 is used as a fallback
-// floor for sensitive defaults.
-func copyFileIfAbsent(src, dst string, mode os.FileMode) error {
+// copyFile copies src→dst. An existing dst is preserved unless refresh is
+// set. Returns true when an existing dst was preserved despite differing
+// from src; identical files report false. Preserves the source mode (within
+// umask); 0o600 is the fallback floor.
+//
+// workspace bounds the write: no component of dst may be a symlink, so a
+// link planted inside the workspace cannot redirect the write outside it.
+func copyFile(workspace, src, dst string, mode os.FileMode, refresh bool) (bool, error) {
+	if err := assertNoSymlinkedParent(workspace, dst); err != nil {
+		return false, err
+	}
 	if _, err := os.Stat(dst); err == nil {
-		return nil
+		same, cmpErr := sameFileContent(src, dst)
+		if cmpErr != nil {
+			return false, cmpErr
+		}
+		if same {
+			return false, nil
+		}
+		if !refresh {
+			return true, nil
+		}
+		if rmErr := os.Remove(dst); rmErr != nil {
+			return false, rmErr
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return false, err
 	}
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer in.Close()
 
@@ -139,11 +216,121 @@ func copyFileIfAbsent(src, dst string, mode os.FileMode) error {
 	}
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
+		return false, err
+	}
+	return false, out.Sync()
+}
+
+// assertNoSymlinkedParent verifies that no path component between workspace
+// and dst is a symlink. The prefix check in provisionBootstrap compares
+// strings, so it cannot see that workspace/skills is a link to /etc; MkdirAll
+// and file creation would then follow that link and write outside the
+// workspace.
+//
+// The agent can create such a link itself when the exec tool is enabled, so
+// this is checked on every item rather than trusted from provisioning time.
+// Lstat is used deliberately: Stat would resolve the link and report the
+// target's type.
+func assertNoSymlinkedParent(workspace, dst string) error {
+	return checkNoSymlinkedParent(workspace, dst, os.Lstat)
+}
+
+// checkNoSymlinkedParent is assertNoSymlinkedParent with the stat call
+// injected. Symlink creation needs elevation on Windows, so tests substitute
+// a stub here to exercise the traversal on any platform.
+func checkNoSymlinkedParent(workspace, dst string, lstat func(string) (os.FileInfo, error)) error {
+	rel, err := filepath.Rel(workspace, dst)
+	if err != nil {
 		return err
 	}
-	return out.Sync()
+	// The workspace root itself is checked first: the loop below only walks
+	// components beneath it, so a symlinked workspace would be followed
+	// before the first check ran.
+	if info, err := lstat(workspace); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through symlinked workspace %q", workspace)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	current := workspace
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			// Nothing exists from here down, so nothing can be followed.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through symlink %q inside workspace", current)
+		}
+	}
+	return nil
+}
+
+// sameFileContent reports whether src and dst hold identical bytes. Size is
+// checked first so differing files usually cost a stat rather than a read.
+func sameFileContent(src, dst string) (bool, error) {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return false, err
+	}
+	dstInfo, err := os.Stat(dst)
+	if err != nil {
+		return false, err
+	}
+	// A directory where a file is expected cannot be resolved by copying;
+	// report differing and let the caller decide.
+	if srcInfo.IsDir() != dstInfo.IsDir() {
+		return false, nil
+	}
+	if srcInfo.Size() != dstInfo.Size() {
+		return false, nil
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return false, err
+	}
+	defer srcFile.Close()
+	dstFile, err := os.Open(dst)
+	if err != nil {
+		return false, err
+	}
+	defer dstFile.Close()
+
+	// Stream in chunks and stop at the first mismatch rather than loading
+	// both files; a bootstrap tree can carry large scripts or skill assets.
+	srcBuf := make([]byte, 32*1024)
+	dstBuf := make([]byte, 32*1024)
+	for {
+		sn, srcErr := io.ReadFull(srcFile, srcBuf)
+		dn, dstErr := io.ReadFull(dstFile, dstBuf)
+		if sn != dn || !bytes.Equal(srcBuf[:sn], dstBuf[:dn]) {
+			return false, nil
+		}
+		srcEOF := errors.Is(srcErr, io.EOF) || errors.Is(srcErr, io.ErrUnexpectedEOF)
+		dstEOF := errors.Is(dstErr, io.EOF) || errors.Is(dstErr, io.ErrUnexpectedEOF)
+		if srcEOF || dstEOF {
+			// Sizes matched going in, so both must end together.
+			return srcEOF && dstEOF, nil
+		}
+		if srcErr != nil {
+			return false, srcErr
+		}
+		if dstErr != nil {
+			return false, dstErr
+		}
+	}
 }

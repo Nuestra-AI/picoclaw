@@ -21,7 +21,7 @@ import (
 )
 
 func agentCmd(message, sessionKey, model string, debug bool,
-	workspace, configDir, toolsFlag, skillsFlag string,
+	workspace, configDir, toolsFlag, skillsFlag string, refresh bool,
 ) error {
 	if sessionKey == "" {
 		sessionKey = "agent:main:cli:default"
@@ -75,6 +75,22 @@ func agentCmd(message, sessionKey, model string, debug bool,
 		os.MkdirAll(workspace, 0o755)
 	}
 
+	// Without --workspace the effective workspace comes from config, which
+	// carries no guarantee of being absolute or inside workspace_root. A
+	// relative value would otherwise be resolved against the process CWD
+	// downstream, landing outside the boundary.
+	//
+	// An absolute value is accepted when it is already inside the root --
+	// config.example.json ships that shape -- so only relative paths go
+	// through ResolveWorkspacePath, which requires them to be relative.
+	if workspaceRoot != "" && cfg.Agents.Defaults.Workspace != "" {
+		resolved, wsErr := resolveConfiguredWorkspace(workspaceRoot, cfg.Agents.Defaults.Workspace)
+		if wsErr != nil {
+			return wsErr
+		}
+		cfg.Agents.Defaults.Workspace = resolved
+	}
+
 	// Tool allowlist: disable all tools, then enable only the listed ones
 	if toolsFlag != "" {
 		toolList := strings.Split(toolsFlag, ",")
@@ -110,7 +126,17 @@ func agentCmd(message, sessionKey, model string, debug bool,
 
 	// Copy bootstrap files from config-dir to workspace
 	if configDir != "" {
-		copyBootstrapFiles(configDir, cfg.Agents.Defaults.Workspace)
+		skipped, err := agent.CopyBootstrapFiles(configDir, cfg.Agents.Defaults.Workspace, refresh)
+		if err != nil {
+			// Copying stops at the first failure, so later items may not have
+			// been written. Surface it instead of leaving a half-seeded
+			// workspace to fail confusingly on the first turn.
+			return fmt.Errorf("error copying bootstrap files from --config-dir: %w", err)
+		}
+		for _, item := range skipped {
+			fmt.Fprintf(os.Stderr,
+				"Warning: kept existing %s (differs from --config-dir; use --refresh to overwrite)\n", item)
+		}
 	}
 
 	// Print agent startup info (only for interactive mode)
@@ -194,6 +220,35 @@ func applySkillsFilter(cfg *config.Config, skills []string) {
 // validateWorkspacePaths resolves --workspace and --config-dir against workspace_root.
 // Both must be relative subdirectories of workspace_root. Returns the resolved
 // absolute paths or an error if validation fails.
+// resolveConfiguredWorkspace bounds agents.defaults.workspace by
+// workspaceRoot. Unlike the --workspace flag, the config value is not
+// validated on the way in: a relative one would be resolved against the
+// process CWD downstream and land outside the boundary.
+//
+// Absolute values are accepted when already inside the root, since
+// deploy/config.example.json ships that shape; ResolveWorkspacePath rejects
+// absolute paths outright, so it is used only for relative ones.
+func resolveConfiguredWorkspace(workspaceRoot, workspace string) (string, error) {
+	if !filepath.IsAbs(workspace) {
+		resolved, err := pathutil.ResolveWorkspacePath(workspaceRoot, workspace)
+		if err != nil {
+			return "", fmt.Errorf("invalid agents.defaults.workspace: %w", err)
+		}
+		return resolved, nil
+	}
+
+	absRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace_root: %w", err)
+	}
+	clean := filepath.Clean(workspace)
+	if clean != absRoot && !strings.HasPrefix(clean, absRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf(
+			"agents.defaults.workspace %q is outside workspace_root %q", workspace, workspaceRoot)
+	}
+	return clean, nil
+}
+
 func validateWorkspacePaths(workspaceRoot, workspace, configDir string) (string, string, error) {
 	if workspace != "" {
 		resolved, err := pathutil.ResolveWorkspacePath(workspaceRoot, workspace)
@@ -210,23 +265,6 @@ func validateWorkspacePaths(workspaceRoot, workspace, configDir string) (string,
 		configDir = resolved
 	}
 	return workspace, configDir, nil
-}
-
-// copyBootstrapFiles copies recognized bootstrap files (AGENTS.md, IDENTITY.md,
-// SOUL.md, USER.md) from srcDir into the workspace directory.
-func copyBootstrapFiles(srcDir, workspace string) {
-	bootstrapFiles := []string{"AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md"}
-	for _, filename := range bootstrapFiles {
-		srcPath := filepath.Join(srcDir, filename)
-		data, err := os.ReadFile(srcPath)
-		if err != nil {
-			continue // file not present in config-dir, skip
-		}
-		dstPath := filepath.Join(workspace, filename)
-		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to write %s: %v\n", dstPath, err)
-		}
-	}
 }
 
 func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {

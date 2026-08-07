@@ -70,6 +70,13 @@ echo "You are Acme's customer support assistant." \
   > /data/workspaces/tenant-acme/config/AGENT.md
 ```
 
+Bootstrap items are `AGENT.md` or `AGENTS.md`, `IDENTITY.md`, `SOUL.md`,
+`USER.md`, `skills/`, and `scripts/`. Missing items are skipped. Files already
+in the workspace are kept, not overwritten, so editing a tenant's `workspace/`
+copy survives later provisioning — update the workspace copy directly, or run
+`picoclaw agent --config-dir ... --refresh` to force the config copy back over
+it.
+
 #### What a tenant overlay can and cannot change
 
 The overlay is merged field-by-field over the gateway's base config, and only
@@ -193,6 +200,104 @@ DEPLOY_MODE=docker ./deploy/smoke-test.sh
 ```
 
 `workspace/` and `config/` are both relative to `workspace_root` from the gateway's perspective. Webhook payloads send relative paths (`tenant-acme/workspace`), the agent loop validates they resolve inside the boundary, then operates on the absolute path.
+
+---
+
+## What defines a tenant
+
+**`workspace` is the tenant boundary.** Nothing else is.
+
+The gateway keys its per-tenant agents on `workspace` + `configDir`
+(`tenantKey` in `pkg/agent/agent_tenant_registry.go`). Two requests carrying
+the same `workspace` are the same tenant — same agent instance, same
+filesystem, same session store — regardless of what else the payload says.
+
+`stackId` does **not** participate. It scopes the session key
+(`agent:main:magicform:{stackId}:{conversationId}`), which separates
+conversation history *within* whatever workspace was given. Sending different
+`stackId` values with one `workspace` yields separate conversations sharing one
+filesystem — not separate tenants.
+
+There is no `accountId` field in the gateway. If your backend has accounts,
+stacks, or projects, you decide which of them maps to `workspace`.
+
+### Choosing what `workspace` means
+
+The gateway does not care what the string represents, only that it is stable
+and unique per isolation unit. Two common choices:
+
+| Scheme | `workspace` | Isolation unit |
+|---|---|---|
+| Per account | `acct-1234/workspace` | One filesystem per customer; their stacks share files and see each other's data. |
+| Per stack | `acct-1234/stack-7/workspace` | One filesystem per stack; the same customer's stacks cannot read each other. |
+
+Pick per-account when a customer's stacks should share uploaded files, notes,
+or scratch state. Pick per-stack when they must not — for example when
+different stacks belong to different end users.
+
+The rules that matter either way:
+
+- **Stable across requests.** A given account (or stack) must always receive
+  the identical `workspace` string. A new value means a new empty workspace,
+  re-provisioned from `configDir` with no prior session history.
+- **Unique per isolation unit.** Two units must never share a `workspace`;
+  that is precisely what filesystem isolation is.
+- **Exact string match.** Keys are compared as strings, so
+  `acct-1234/workspace` and `acct-1234/workspace/` are two different tenants
+  pointing at one directory. Normalize before sending.
+- **Cardinality has a cost.** Tenant agents are cached and **never evicted**
+  until the gateway restarts, so each distinct `workspace` holds an agent and
+  its provider for the process lifetime. Per-stack multiplies that count by
+  stacks-per-account; size accordingly.
+
+`configDir` is part of the key too, so the same `workspace` with two different
+`configDir` values produces two agents over one directory. Keep `configDir` a
+deterministic function of the same unit — usually a sibling of `workspace`.
+
+The hashed agent ID in the logs (`tenant-c99f078b`) is
+`sha256(workspace)[:4]`, so it changes whenever the workspace string changes.
+That is the quickest way to confirm two requests landed on the same tenant.
+
+---
+
+## Per-tenant routing and privileges
+
+Tenant scoping is **per request**, not per config file. The four fields below
+travel in the webhook payload, so the calling backend decides what each tenant
+gets — there is no static list of tenants in `config.json`.
+
+| Payload field | Effect |
+|---|---|
+| `workspace` | Working directory, relative to `workspace_root`. Required for any tenant routing. |
+| `configDir` | Config overlay + bootstrap source, relative to `workspace_root`. |
+| `allowedTools` | Tool allowlist for the turn. **Omit or leave empty to allow every enabled tool.** |
+| `allowedSkills` | Skill filter for the turn. Omit or leave empty to load every skill. |
+
+```jsonc
+{
+  "stackId": "s1",
+  "conversationId": "c1",
+  "userId": "u1",
+  "message": "hello",
+  "workspace": "tenant-acme/workspace",
+  "configDir": "tenant-acme/config",
+  "allowedTools": ["read_file", "web_fetch"],
+  "allowedSkills": ["summarize"]
+}
+```
+
+`allowedTools` is how one tenant gets shell access and another does not. Note
+the default: an **absent or empty** list means no filtering, so a caller that
+forgets the field grants everything the gateway has enabled. Send an explicit
+allowlist for any tenant that should be restricted, and keep `tools.exec`
+disabled in the base config if no tenant should ever reach a shell.
+
+These filter what a turn may use; they do not widen it. A tool disabled in the
+gateway config cannot be re-enabled by listing it here.
+
+The CLI takes the same four as flags — `--workspace`, `--config-dir`,
+`--tools`, `--skills` — which is what the smoke test uses to exercise the path
+without a backend.
 
 ---
 
