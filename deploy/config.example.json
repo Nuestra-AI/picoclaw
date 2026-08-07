@@ -1,4 +1,5 @@
 {
+  "version": 3,
   "agents": {
     "defaults": {
       "workspace_root": "/data/workspaces",
@@ -50,6 +51,33 @@
     },
     "web_fetch": {
       "enabled": true
+    },
+    "find_skills": {
+      "enabled": false
+    },
+    "install_skill": {
+      "enabled": false
+    },
+    "skills": {
+      "enabled": true,
+      "registries": [
+        {
+          "name": "clawhub",
+          "enabled": false,
+          "base_url": "https://clawhub.ai",
+          "param": {
+            "allow": []
+          }
+        },
+        {
+          "name": "github",
+          "enabled": false,
+          "base_url": "https://github.com",
+          "param": {
+            "allow": []
+          }
+        }
+      ]
     }
   }
 }

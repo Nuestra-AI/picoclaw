@@ -270,7 +270,10 @@ func registerSharedTools(
 		find_skills_enable := cfg.Tools.IsToolEnabled("find_skills")
 		install_skills_enable := cfg.Tools.IsToolEnabled("install_skill")
 		if skills_enabled && (find_skills_enable || install_skills_enable) {
-			registryMgr := skills.NewRegistryManagerFromToolsConfig(cfg.Tools.Skills)
+			// Agent-scoped: registries here are reachable from tenant input,
+			// so each is bounded by its configured allowlist. Operator-driven
+			// callers (CLI, admin API) use the ungated constructor.
+			registryMgr := skills.NewAgentRegistryManagerFromToolsConfig(cfg.Tools.Skills)
 
 			if find_skills_enable {
 				searchCache := skills.NewSearchCache(

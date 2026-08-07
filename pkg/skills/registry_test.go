@@ -216,8 +216,10 @@ func TestLegacyGithubBaseURLOverridesDefaultRegistryBaseURL(t *testing.T) {
 	registry := LookupRegistryFromToolsConfig(cfg, "github")
 	assert.NotNil(t, registry)
 
-	ghRegistry, ok := registry.(*GitHubRegistry)
-	assert.True(t, ok)
+	ghRegistry, ok := UnwrapRegistry(registry).(*GitHubRegistry)
+	if !assert.True(t, ok) {
+		return
+	}
 	assert.Equal(t, "https://ghe.example.com/git", ghRegistry.webBase)
 }
 
@@ -234,8 +236,10 @@ func TestExplicitGithubRegistryBaseURLBeatsLegacyCompat(t *testing.T) {
 	registry := LookupRegistryFromToolsConfig(cfg, "github")
 	assert.NotNil(t, registry)
 
-	ghRegistry, ok := registry.(*GitHubRegistry)
-	assert.True(t, ok)
+	ghRegistry, ok := UnwrapRegistry(registry).(*GitHubRegistry)
+	if !assert.True(t, ok) {
+		return
+	}
 	assert.Equal(t, "https://ghe-explicit.example.com/scm", ghRegistry.webBase)
 }
 

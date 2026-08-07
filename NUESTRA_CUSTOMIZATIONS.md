@@ -221,6 +221,77 @@ forward-ported.
   they do not travel with a clone. Dependabot *security updates* is still
   off — enabling it means automated PRs, which is a workflow choice.
 
+### 12. Skill registry allowlist
+- **Owns:** `pkg/skills/nuestra_allowlist_registry.go` — an
+  `allowlistRegistry` decorator implementing `SkillRegistry`, plus
+  `UnwrapRegistry`.
+- **Owns:** `pkg/skills/nuestra_allowlist_manager.go` —
+  `NewAgentRegistryManagerFromToolsConfig`, the agent-scoped constructor that
+  wraps each configured provider in the gate.
+- **Why:** a skill is markdown injected into the agent prompt plus a
+  `scripts/` tree the exec tool can run, so installing one is closer to
+  running third-party code than to fetching data. Upstream accepts any
+  clawhub slug or any public GitHub repo, with no allowlist anywhere in
+  `pkg/skills/`. With `install_skill` reachable from a tenant turn, the
+  install target is attacker-controlled.
+- **Shape:** the decorator wraps upstream's registry rather than replacing
+  it, so search and install keep upstream's implementation and its future
+  fixes. Every target is checked first; search results outside the list are
+  dropped (with the inner limit widened, since filtering happens after the
+  fetch). An **empty allowlist denies everything** — a dropped config key
+  must fail closed. A pinned entry (`owner/repo@ref`) overrides any
+  caller-supplied version, or the agent could request an arbitrary commit
+  of an allowed repo.
+- **Config:** per-registry `param.allow`, a list of `owner/repo`,
+  `owner/repo@ref`, or bare clawhub slugs. See
+  [deploy/README.md](deploy/README.md#curating-the-skill-registries).
+- **Scoped to the agent path, not global.** Only `agent_init.go` uses the
+  gated constructor. `picoclaw skills install` and the launcher's admin API
+  keep upstream's ungated registries, because the operator is the one asking
+  there and an empty allowlist would deny the very workflow that seeds
+  skills. The untrusted input this bounds arrives on a tenant turn.
+  `TestAgentRegistryProvidersAreAllowlistGated` and
+  `TestOperatorRegistryProvidersAreNotGated` pin both halves.
+
+> **Do not make the gate global.** Registering the allowlist by overriding
+> upstream's `github`/`clawhub` builders from an `init()` is the obvious
+> implementation and it is wrong. It was tried and reverted:
+>
+> - It reaches **every** caller, not just the agent. `picoclaw skills install`
+>   and the launcher's admin API are operator-driven, and an empty allowlist
+>   denies them by default — breaking the workflow that seeds skills.
+> - It broke **15 upstream tests** across `cmd/picoclaw/internal/skills` and
+>   `web/backend/api`, none of which this fork otherwise touches.
+> - It required mirroring `GitHubRegistryConfig` and `ClawHubConfig` field by
+>   field, because `init()` order within a package is file-name order and
+>   delegating to the builder being replaced would depend on file sort order.
+>   That made every new upstream field a silent drop.
+>
+> The gate belongs where untrusted input arrives: the agent loop. Scoping it
+> to `NewAgentRegistryManagerFromToolsConfig` removed all three problems.
+
+- **Also fixes an upstream defect:** `collectUnknownJSONFields` in
+  `pkg/config/diagnostics.go` matched JSON keys against struct tags and
+  could not see `SkillRegistryConfig`'s custom `UnmarshalJSON`, so *any*
+  registry param was reported as an unknown field and startup failed —
+  including upstream's own documented `github.proxy` and
+  `clawhub.search_path`. The `openFieldTypes` set exempts types whose
+  unmarshaler folds unrecognized keys into a catch-all map.
+- **Owns:** `pkg/skills/nuestra_loader_precedence_test.go` — characterization
+  tests over upstream's `SkillsLoader`. No production code of ours, but the
+  bootstrap provisioning in entry 2 seeds `workspace/skills/`, so the loader's
+  resolution order is part of our contract with operators and is documented in
+  `deploy/README.md`. The tests pin: builtin skills veto workspace and global
+  ones (a tenant cannot shadow `github` or `summarize`), workspace beats
+  global, discovery is one directory deep, and a directory without `SKILL.md`
+  is ignored. Verified to fail if the veto is removed.
+- **Depends on `version` being set in the config file.** Without it,
+  `LoadConfig` treats the config as legacy, runs the migration chain, and
+  rebuilds the registries — discarding `param` with no error. The allowlist
+  would then load, report itself active, and block everything including
+  allowed repos. `deploy/config.example.json` carries `"version": 3` for
+  this reason.
+
 ---
 
 ## Clone setup: never let anything default to upstream

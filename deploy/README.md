@@ -201,6 +201,71 @@ DEPLOY_MODE=docker ./deploy/smoke-test.sh
 
 `workspace/` and `config/` are both relative to `workspace_root` from the gateway's perspective. Webhook payloads send relative paths (`tenant-acme/workspace`), the agent loop validates they resolve inside the boundary, then operates on the absolute path.
 
+### Skill format
+
+`skills/` is not a free-form tree. It holds **one directory per skill**, each
+containing a `SKILL.md`:
+
+```
+config/skills/
+├── pdf-tools/
+│   ├── SKILL.md          # required — without it the directory is not a skill
+│   └── scripts/          # optional; runnable when the exec tool is enabled
+└── invoice-parser/
+    └── SKILL.md
+```
+
+Discovery is **one level deep**. `skills/category/pdf-tools/SKILL.md` is never
+found. A directory without `SKILL.md` is silently ignored rather than
+reported, so a typo in the filename looks like the skill simply not existing.
+
+`SKILL.md` needs YAML frontmatter. Only two keys are read — everything else
+(`homepage`, `metadata`, …) is preserved but ignored by the loader:
+
+```markdown
+---
+name: pdf-tools
+description: Extract text and tables from PDFs. Use when the user shares a PDF.
+---
+
+# PDF Tools
+
+## When to use
+...
+```
+
+`description` is what the agent sees when deciding whether to load the skill,
+so write it as a trigger condition rather than a summary.
+
+Names must be alphanumeric with single hyphens (`^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$`),
+64 characters at most. A name that fails the pattern is skipped silently.
+
+### Which skill wins
+
+Three roots are searched, and the order is not what you would guess:
+
+1. **Built-ins always win.** A workspace skill cannot shadow a built-in name.
+   This is a veto, not a preference: name a skill `github` or `summarize` and
+   your version is ignored with no error.
+2. **Workspace `skills/`** — the tenant's own tree, seeded from `config/`.
+3. **Global `~/.picoclaw/skills`** — last resort.
+
+Check the built-in names before choosing yours; a collision fails silently.
+
+### Two ways skills arrive
+
+These are independent mechanisms, and only the first is active by default:
+
+- **Provisioning (no tool flags involved).** Skills in `config/skills/` are
+  copied into the tenant workspace on first turn and loaded through a path
+  with **no tool gate on it**. This works regardless of the `find_skills` and
+  `install_skill` settings below.
+- **Registry install.** The agent fetches skills at runtime from clawhub or
+  GitHub. Off by default; see [Curating the skill registries](#curating-the-skill-registries).
+
+If you author the skills, provisioning is the simpler path and needs none of
+the registry configuration.
+
 ---
 
 ## What defines a tenant
@@ -298,6 +363,134 @@ gateway config cannot be re-enabled by listing it here.
 The CLI takes the same four as flags — `--workspace`, `--config-dir`,
 `--tools`, `--skills` — which is what the smoke test uses to exercise the path
 without a backend.
+
+---
+
+## Curating the skill registries
+
+A skill is markdown injected into the agent's prompt plus a `scripts/` tree
+the exec tool can run. Installing one is closer to running third-party code
+than to fetching data.
+
+Upstream ships two registries — `clawhub` (`https://clawhub.ai`) and `github`
+(`https://github.com`) — and both default to **enabled**, as do the
+`find_skills` and `install_skill` tools. Upstream applies no allowlist: the
+`github` registry resolves any `owner/repo` and fetches it. With
+`install_skill` reachable from a tenant turn, the install target is
+attacker-controlled.
+
+`config.example.json` therefore ships with all of it off:
+
+```json
+"find_skills":   { "enabled": false },
+"install_skill": { "enabled": false }
+```
+
+**This costs you nothing if you provision skills yourself.** Skills placed in
+a tenant workspace — including the `skills/` tree the bootstrap copies from
+`config_dir` — load through a path with no tool gate on it. The operator
+seeds skills; tenants use them. The two tools above only govern fetching
+*new* skills from a remote registry.
+
+### What the two tools do
+
+They are independent, and one combination is a trap:
+
+| `find_skills` | `install_skill` | Effect |
+|---|---|---|
+| off | off | Default. No registry is constructed; the allowlist below is dormant. |
+| on | off | Agent can browse but not install. Search results are filtered to the allowlist. |
+| off | on | **Avoid.** Discovery is hidden but installing is not blocked. |
+| on | on | Full self-service, bounded by the allowlist. |
+
+The third row is the trap: **`install_skill` never calls search.** It takes a
+slug straight from its tool arguments, so the agent can install anything it
+can name — from training data or from the conversation — without
+`find_skills`. Turning discovery off hides the catalog without closing the
+install path. Before the allowlist existed, that meant any public GitHub repo.
+
+With both on, the allowlist is what bounds installs; with `install_skill`
+off, it is only defense in depth.
+
+### Turning discovery on with an allowlist
+
+If tenants need to install skills themselves, enable the tools and list what
+they may install. Each registry takes a `param.allow` list:
+
+```json
+"find_skills":   { "enabled": true },
+"install_skill": { "enabled": true },
+"skills": {
+  "enabled": true,
+  "registries": [
+    { "name": "clawhub", "enabled": false, "base_url": "https://clawhub.ai" },
+    {
+      "name": "github",
+      "enabled": true,
+      "base_url": "https://github.com",
+      "param": {
+        "allow": [
+          "Nuestra-AI/skills@v1.4.0",
+          "some-vendor/pdf-tools"
+        ]
+      }
+    }
+  ]
+}
+```
+
+Rules, in the order they bite:
+
+- **An empty `allow` denies everything.** A dropped key fails closed rather
+  than opening the registry to the whole internet.
+- **`owner/repo@ref` pins the version**, and the pin wins over whatever
+  version the agent asks for. Without a pin the agent chooses the ref, so an
+  allowed repo can still change under you. Prefer pinning to a tag or commit.
+- **A subpath under an allowed repo is permitted** — the repo is the vetted
+  unit, so `Nuestra-AI/skills/pdf-tools` passes if `Nuestra-AI/skills` is
+  listed. (GitHub only; clawhub identifiers cannot contain `/`.)
+- **Matching is on whole path segments**, so `nuestra-ai-evil/skills` does
+  not match `Nuestra-AI/skills`. For github entries, case, a `.git` suffix, a
+  full `https://github.com/...` URL (including a GitHub Enterprise base path),
+  and a trailing slash all normalize to the same entry.
+- **Clawhub slugs are matched whole.** They are opaque single segments, so
+  `summarize` does not admit `summarize@anything` — unlike github targets,
+  no suffix is stripped before comparison.
+- **A github entry must name owner *and* repo.** `Nuestra-AI` alone is
+  rejected rather than treated as every repo that owner has, since the
+  subpath rule would otherwise turn a typo into an org-wide wildcard. Only
+  `http`/`https` URLs are recognized, and a URL's host must match the
+  registry's configured `base_url`.
+- **Case affects matching only, never the fetch.** GitHub serves a repo under
+  any casing, so the allowlist compares case-insensitively — otherwise an
+  entry written `nuestra-ai/skills` would be bypassed by a request for
+  `Nuestra-AI/skills`, which is the same repo. The install itself uses the
+  casing as requested, so the fetched URL and the created
+  `workspace/skills/<name>` directory keep it. Write entries in the repo's
+  canonical case (`Nuestra-AI/skills`) so the config reads as the truth.
+- **Search results are filtered to the allowlist**, so the agent is not shown
+  skills that `install_skill` would then refuse.
+- Clawhub entries are bare slugs (`pdf-tools`), not `owner/repo`.
+
+**The allowlist bounds the agent, not you.** `picoclaw skills install` and the
+launcher's admin API are operator-driven and stay unrestricted — an allowlist
+that blocked them would break the workflow that seeds skills in the first
+place. Only skills the agent installs during a tenant turn are gated.
+
+### `version` must be set in your config
+
+`config.example.json` carries `"version": 3`. Keep it.
+
+Without it, `LoadConfig` treats the file as legacy and runs the migration
+chain on startup, which rebuilds the registries and **discards `param`
+without an error**. The allowlist would load, report itself active, and block
+everything — including the repos you listed.
+
+The same migration rewrites `config.json` in place (expanding every default,
+leaving a `config.json.<date>.bak`) and needs the config directory to be
+writable — `MakeBackup` failing is fatal, so a read-only config mount without
+`version` set means the gateway will not start. With `version` present none
+of this runs.
 
 ---
 
