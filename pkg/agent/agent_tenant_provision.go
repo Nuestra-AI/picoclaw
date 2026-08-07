@@ -96,12 +96,20 @@ func provisionBootstrap(configDir, workspace string, refresh bool) ([]string, er
 			return nil, fmt.Errorf("bootstrap item %q resolves outside workspace", item)
 		}
 
-		info, err := os.Stat(src)
+		// Lstat, not Stat: a source item that is itself a symlink must not be
+		// followed. configDir can be tenant-supplied, so a link such as
+		// AGENT.md -> /etc/passwd would otherwise be copied into the
+		// workspace and become readable through in-workspace tools. Matches
+		// the rule copyDir already applies inside the tree.
+		info, err := os.Lstat(src)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("stat %q: %w", src, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
 
 		if info.IsDir() {
@@ -143,8 +151,8 @@ func copyDir(workspace, src, dst string, refresh bool) ([]string, error) {
 		if info.IsDir() {
 			// MkdirAll follows an existing symlinked component, so check
 			// before creating.
-			if err := assertNoSymlinkedParent(workspace, target); err != nil {
-				return err
+			if linkErr := assertNoSymlinkedParent(workspace, target); linkErr != nil {
+				return linkErr
 			}
 			return os.MkdirAll(target, info.Mode().Perm())
 		}
@@ -188,8 +196,8 @@ func copyFile(workspace, src, dst string, mode os.FileMode, refresh bool) (bool,
 		if !refresh {
 			return true, nil
 		}
-		if err := os.Remove(dst); err != nil {
-			return false, err
+		if rmErr := os.Remove(dst); rmErr != nil {
+			return false, rmErr
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err
@@ -239,6 +247,17 @@ func checkNoSymlinkedParent(workspace, dst string, lstat func(string) (os.FileIn
 	if err != nil {
 		return err
 	}
+	// The workspace root itself is checked first: the loop below only walks
+	// components beneath it, so a symlinked workspace would be followed
+	// before the first check ran.
+	if info, err := lstat(workspace); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through symlinked workspace %q", workspace)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
 	current := workspace
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		if part == "" || part == "." {

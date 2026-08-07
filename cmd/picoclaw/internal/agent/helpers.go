@@ -75,6 +75,22 @@ func agentCmd(message, sessionKey, model string, debug bool,
 		os.MkdirAll(workspace, 0o755)
 	}
 
+	// Without --workspace the effective workspace comes from config, which
+	// carries no guarantee of being absolute or inside workspace_root. A
+	// relative value would otherwise be resolved against the process CWD
+	// downstream, landing outside the boundary.
+	//
+	// An absolute value is accepted when it is already inside the root --
+	// config.example.json ships that shape -- so only relative paths go
+	// through ResolveWorkspacePath, which requires them to be relative.
+	if workspaceRoot != "" && cfg.Agents.Defaults.Workspace != "" {
+		resolved, wsErr := resolveConfiguredWorkspace(workspaceRoot, cfg.Agents.Defaults.Workspace)
+		if wsErr != nil {
+			return wsErr
+		}
+		cfg.Agents.Defaults.Workspace = resolved
+	}
+
 	// Tool allowlist: disable all tools, then enable only the listed ones
 	if toolsFlag != "" {
 		toolList := strings.Split(toolsFlag, ",")
@@ -204,6 +220,35 @@ func applySkillsFilter(cfg *config.Config, skills []string) {
 // validateWorkspacePaths resolves --workspace and --config-dir against workspace_root.
 // Both must be relative subdirectories of workspace_root. Returns the resolved
 // absolute paths or an error if validation fails.
+// resolveConfiguredWorkspace bounds agents.defaults.workspace by
+// workspaceRoot. Unlike the --workspace flag, the config value is not
+// validated on the way in: a relative one would be resolved against the
+// process CWD downstream and land outside the boundary.
+//
+// Absolute values are accepted when already inside the root, since
+// deploy/config.example.json ships that shape; ResolveWorkspacePath rejects
+// absolute paths outright, so it is used only for relative ones.
+func resolveConfiguredWorkspace(workspaceRoot, workspace string) (string, error) {
+	if !filepath.IsAbs(workspace) {
+		resolved, err := pathutil.ResolveWorkspacePath(workspaceRoot, workspace)
+		if err != nil {
+			return "", fmt.Errorf("invalid agents.defaults.workspace: %w", err)
+		}
+		return resolved, nil
+	}
+
+	absRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace_root: %w", err)
+	}
+	clean := filepath.Clean(workspace)
+	if clean != absRoot && !strings.HasPrefix(clean, absRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf(
+			"agents.defaults.workspace %q is outside workspace_root %q", workspace, workspaceRoot)
+	}
+	return clean, nil
+}
+
 func validateWorkspacePaths(workspaceRoot, workspace, configDir string) (string, string, error) {
 	if workspace != "" {
 		resolved, err := pathutil.ResolveWorkspacePath(workspaceRoot, workspace)

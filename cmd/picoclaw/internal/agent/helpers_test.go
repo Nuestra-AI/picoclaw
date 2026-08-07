@@ -138,3 +138,43 @@ func TestValidateWorkspacePaths(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveConfiguredWorkspace(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspaces")
+
+	t.Run("relative is resolved against the root, not the CWD", func(t *testing.T) {
+		got, err := resolveConfiguredWorkspace(root, filepath.Join("tenant-a", "workspace"))
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(root, "tenant-a", "workspace"), got)
+	})
+
+	t.Run("absolute inside the root is kept", func(t *testing.T) {
+		inside := filepath.Join(root, "default")
+		got, err := resolveConfiguredWorkspace(root, inside)
+		require.NoError(t, err)
+		assert.Equal(t, inside, got)
+	})
+
+	t.Run("the root itself is allowed", func(t *testing.T) {
+		got, err := resolveConfiguredWorkspace(root, root)
+		require.NoError(t, err)
+		assert.Equal(t, root, got)
+	})
+
+	t.Run("absolute outside the root is rejected", func(t *testing.T) {
+		_, err := resolveConfiguredWorkspace(root, mustAbs(t, filepath.Join("etc", "passwd")))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outside workspace_root")
+	})
+
+	t.Run("sibling of the root is rejected", func(t *testing.T) {
+		_, err := resolveConfiguredWorkspace(root, root+"-evil")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outside workspace_root")
+	})
+
+	t.Run("traversal is rejected", func(t *testing.T) {
+		_, err := resolveConfiguredWorkspace(root, filepath.Join("..", "escape"))
+		require.Error(t, err)
+	})
+}

@@ -282,6 +282,33 @@ func TestCopyBootstrapFilesRejectsSymlinkedFile(t *testing.T) {
 	assertFileContent(t, target, "original")
 }
 
+// TestCopyBootstrapFilesSkipsSymlinkedSource covers a symlinked item in the
+// source: configDir can be tenant-supplied, so AGENT.md -> /etc/passwd must
+// not be followed and copied into the workspace.
+func TestCopyBootstrapFilesSkipsSymlinkedSource(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	outside := t.TempDir()
+
+	secret := filepath.Join(outside, "secret")
+	writeFile(t, secret, "SENSITIVE")
+
+	if err := os.Symlink(secret, filepath.Join(src, "AGENT.md")); err != nil {
+		t.Skipf("cannot create symlinks on this platform: %v", err)
+	}
+	writeFile(t, filepath.Join(src, "USER.md"), "user")
+
+	if _, err := CopyBootstrapFiles(src, dst, false); err != nil {
+		t.Fatalf("CopyBootstrapFiles: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "AGENT.md")); !os.IsNotExist(err) {
+		t.Error("followed a symlinked source item into the workspace")
+	}
+	// Non-symlinked items still copy.
+	assertFileContent(t, filepath.Join(dst, "USER.md"), "user")
+}
+
 // fakeSymlinkInfo reports a path as a symlink so the traversal can be tested
 // where creating real symlinks needs elevation (Windows).
 type fakeSymlinkInfo struct{ os.FileInfo }
@@ -328,6 +355,12 @@ func TestCheckNoSymlinkedParent(t *testing.T) {
 			name:    "missing component stops the walk",
 			dst:     filepath.Join(ws, "skills", "demo.md"),
 			missing: map[string]bool{filepath.Join(ws, "skills"): true},
+		},
+		{
+			name:      "symlinked workspace root",
+			dst:       filepath.Join(ws, "AGENT.md"),
+			symlinks:  map[string]bool{ws: true},
+			wantError: true,
 		},
 	}
 
