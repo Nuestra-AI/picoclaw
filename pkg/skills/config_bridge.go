@@ -112,7 +112,7 @@ func NormalizeInstallTargetForRegistry(cfg config.SkillsToolsConfig, registryNam
 	if registry == nil {
 		return target
 	}
-	ghRegistry, ok := registry.(*GitHubRegistry)
+	ghRegistry, ok := UnwrapRegistry(registry).(*GitHubRegistry)
 	if !ok {
 		return target
 	}

@@ -98,7 +98,7 @@ func TestGitHubRegistryProviderDecodesProxyParam(t *testing.T) {
 
 	registry := builder.BuildRegistry()
 	require.NotNil(t, registry)
-	ghRegistry, ok := registry.(*GitHubRegistry)
+	ghRegistry, ok := UnwrapRegistry(registry).(*GitHubRegistry)
 	require.True(t, ok)
 	assert.Equal(t, "http://127.0.0.1:7890", ghRegistry.installer.proxy)
 }
