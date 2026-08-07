@@ -338,9 +338,23 @@ func maxRuneCount(s string, count int) int {
 	return utf8.RuneCountInString(string(runes[:count]))
 }
 
+// openFieldTypes are types whose UnmarshalJSON folds unrecognized keys into a
+// catch-all map rather than rejecting them.
+//
+// The walker below matches JSON keys against struct tags, which cannot see a
+// custom UnmarshalJSON. Without this, every registry param is reported as an
+// unknown field and startup fails -- including upstream's own documented
+// github "proxy" and clawhub "search_path" keys.
+var openFieldTypes = map[reflect.Type]struct{}{
+	reflect.TypeOf(SkillRegistryConfig{}): {},
+}
+
 func collectUnknownJSONFields(raw any, targetType reflect.Type, path string) []string {
 	targetType = derefType(targetType)
 	if targetType == nil {
+		return nil
+	}
+	if _, open := openFieldTypes[targetType]; open {
 		return nil
 	}
 
