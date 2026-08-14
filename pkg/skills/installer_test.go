@@ -1018,6 +1018,37 @@ func TestGetGithubDirAllFiles_RejectsOffOriginURLs(t *testing.T) {
 	}
 }
 
+// Scheme is part of the origin: keeping the configured host but dropping to
+// http would fetch skill content in the clear.
+func TestIsAllowedGitHubURL(t *testing.T) {
+	installer, err := NewSkillInstallerWithBaseURL(t.TempDir(), "https://ghe.example.com", "", "")
+	if err != nil {
+		t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+	}
+
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"https://ghe.example.com/api/v3/repos/x", true},
+		{"https://ghe.example.com/raw/x", true},
+		{"http://ghe.example.com/api/v3/repos/x", false}, // plaintext downgrade
+		{"https://evil.example.com/x", false},
+		{"file:///etc/passwd", false},
+		{"ftp://ghe.example.com/x", false},
+		{"", false},
+		{"//ghe.example.com/x", false}, // scheme-relative
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			if got := installer.isAllowedGitHubURL(tt.url); got != tt.want {
+				t.Errorf("isAllowedGitHubURL(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 // Pinning the pre-redirect URL is not enough on its own: a configured host
 // that answers with a 302 would otherwise pull skill content from anywhere.
 func TestGetGithubDirAllFiles_RejectsOffOriginRedirect(t *testing.T) {

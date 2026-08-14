@@ -636,6 +636,10 @@ func isSafeContentName(name string) bool {
 // install walk into a request generator aimed at hosts the operator never
 // configured. Pinning to the configured hosts keeps a compromised or hostile
 // registry from redirecting the walk off-origin.
+//
+// Scheme is part of the origin, matching parseGitHubRefPathParts. Comparing
+// the host alone would let an entry keep the configured host but drop to
+// http, fetching skill content in the clear.
 func (si *SkillInstaller) isAllowedGitHubURL(rawURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -655,7 +659,8 @@ func (si *SkillInstaller) isAllowedGitHubURL(rawURL string) bool {
 		if err != nil || baseURL.Host == "" {
 			continue
 		}
-		if strings.EqualFold(u.Host, baseURL.Host) {
+		if strings.EqualFold(u.Host, baseURL.Host) &&
+			strings.EqualFold(u.Scheme, baseURL.Scheme) {
 			return true
 		}
 	}
