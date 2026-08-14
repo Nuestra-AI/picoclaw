@@ -67,7 +67,7 @@ func NewSkillInstallerWithBaseURL(workspace, githubBaseURL, githubToken, proxy s
 		return nil, err
 	}
 
-	return &SkillInstaller{
+	si := &SkillInstaller{
 		workspace:        workspace,
 		client:           client,
 		githubBaseURL:    endpoints.WebBaseURL,
@@ -75,7 +75,23 @@ func NewSkillInstallerWithBaseURL(workspace, githubBaseURL, githubToken, proxy s
 		githubRawBaseURL: endpoints.RawBaseURL,
 		githubToken:      githubToken,
 		proxy:            proxy,
-	}, nil
+	}
+
+	// Validating only the pre-redirect URL would leave the origin pin in
+	// isAllowedGitHubURL trivially bypassable: a configured host could 302 to
+	// anywhere and the installer would write the response to disk as skill
+	// content. Re-check every hop.
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if !si.isAllowedGitHubURL(req.URL.String()) {
+			return fmt.Errorf("redirect to off-origin host %q", req.URL.Host)
+		}
+		return nil
+	}
+
+	return si, nil
 }
 
 type gitHubEndpoints struct {

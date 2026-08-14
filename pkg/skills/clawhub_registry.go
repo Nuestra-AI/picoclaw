@@ -268,6 +268,7 @@ func (c *ClawHubRegistry) GetSkillMeta(ctx context.Context, slug string) (*Skill
 		meta.LatestVersion = resp.LatestVersion.Version
 	}
 	if resp.Moderation != nil {
+		meta.ModerationKnown = true
 		meta.IsMalwareBlocked = resp.Moderation.IsMalwareBlocked
 		meta.IsSuspicious = resp.Moderation.IsSuspicious
 	}
@@ -288,15 +289,19 @@ func (c *ClawHubRegistry) DownloadAndInstall(
 		return nil, fmt.Errorf("invalid slug %q: error: %s", slug, err.Error())
 	}
 
-	// Step 1: Fetch metadata (with fallback).
-	result := &InstallResult{}
+	// Step 1: Fetch metadata. Clawhub is the moderating registry, so the
+	// verdict is part of the install decision, not decoration: record
+	// whether it was actually obtained and let the caller fail closed.
+	result := &InstallResult{ModeratesContent: true}
 	meta, err := c.GetSkillMeta(ctx, slug)
 	if err != nil {
-		// Fallback: proceed without metadata.
+		slog.Warn("skill metadata unavailable; moderation verdict is unknown",
+			"registry", c.Name(), "slug", slug, "error", err)
 		meta = nil
 	}
 
 	if meta != nil {
+		result.ModerationKnown = meta.ModerationKnown
 		result.IsMalwareBlocked = meta.IsMalwareBlocked
 		result.IsSuspicious = meta.IsSuspicious
 		result.Summary = meta.Summary

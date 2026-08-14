@@ -91,13 +91,13 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, target string) 
 		return fmt.Errorf("✗ failed to install skill: %w", err)
 	}
 
-	if result.IsMalwareBlocked {
+	if blocked, reason := skills.ModerationBlocks(result); blocked {
 		rmErr := os.RemoveAll(targetDir)
 		if rmErr != nil {
 			fmt.Printf("\u2717 Failed to remove partial install: %v\n", rmErr)
 		}
 
-		return fmt.Errorf("\u2717 Skill '%s' is flagged as malicious and cannot be installed.\n", target)
+		return fmt.Errorf("\u2717 Skill '%s' %s.\n", target, reason)
 	}
 
 	if result.IsSuspicious {

@@ -259,3 +259,81 @@ func TestNormalizeInstallTargetForRegistryCanonicalizesGitHubURLs(t *testing.T) 
 	)
 	assert.Equal(t, "org/repo/skills/pr-review", got)
 }
+
+// A registry that moderates must produce a verdict. "No verdict" is not
+// "clean": treating it as clean would let one failed metadata request, or a
+// response that simply omits the moderation object, install unchecked.
+func TestModerationBlocks(t *testing.T) {
+	tests := []struct {
+		name        string
+		result      *InstallResult
+		wantBlocked bool
+	}{
+		{
+			name:        "nil result",
+			result:      nil,
+			wantBlocked: true,
+		},
+		{
+			name:        "non-moderating registry is not held to a verdict",
+			result:      &InstallResult{ModeratesContent: false},
+			wantBlocked: false,
+		},
+		{
+			name: "moderating registry, clean verdict",
+			result: &InstallResult{
+				ModeratesContent:  true,
+				MetadataAvailable: true,
+				ModerationKnown:   true,
+			},
+			wantBlocked: false,
+		},
+		{
+			name: "moderating registry, malware verdict",
+			result: &InstallResult{
+				ModeratesContent:  true,
+				MetadataAvailable: true,
+				ModerationKnown:   true,
+				IsMalwareBlocked:  true,
+			},
+			wantBlocked: true,
+		},
+		{
+			name: "moderating registry, metadata fetch failed",
+			result: &InstallResult{
+				ModeratesContent:  true,
+				MetadataAvailable: false,
+			},
+			wantBlocked: true,
+		},
+		{
+			name: "moderating registry, response omitted moderation",
+			result: &InstallResult{
+				ModeratesContent:  true,
+				MetadataAvailable: true,
+				ModerationKnown:   false,
+			},
+			wantBlocked: true,
+		},
+		{
+			name: "suspicious alone does not block",
+			result: &InstallResult{
+				ModeratesContent:  true,
+				MetadataAvailable: true,
+				ModerationKnown:   true,
+				IsSuspicious:      true,
+			},
+			wantBlocked: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocked, reason := ModerationBlocks(tt.result)
+			assert.Equal(t, tt.wantBlocked, blocked)
+			if blocked {
+				assert.NotEmpty(t, reason, "a block must explain itself")
+			}
+		})
+	}
+}

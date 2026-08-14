@@ -1018,6 +1018,51 @@ func TestGetGithubDirAllFiles_RejectsOffOriginURLs(t *testing.T) {
 	}
 }
 
+// Pinning the pre-redirect URL is not enough on its own: a configured host
+// that answers with a 302 would otherwise pull skill content from anywhere.
+func TestGetGithubDirAllFiles_RejectsOffOriginRedirect(t *testing.T) {
+	offOrigin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("PAYLOAD FROM OFF-ORIGIN HOST"))
+	}))
+	defer offOrigin.Close()
+
+	tmpDir := t.TempDir()
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// On-origin URL that redirects off-origin.
+		if strings.Contains(r.URL.Path, "/download") {
+			http.Redirect(w, r, offOrigin.URL+"/payload", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"name": "SKILL.md", "type": "file", "download_url": serverURL + "/download"},
+		})
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	installer, err := NewSkillInstallerWithBaseURL(tmpDir, server.URL, "", "")
+	if err != nil {
+		t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+	}
+
+	localDir := filepath.Join(tmpDir, "skill")
+	if err := installer.getGithubDirAllFiles(
+		context.Background(),
+		server.URL+"/contents",
+		localDir,
+		true,
+	); err == nil {
+		t.Fatal("getGithubDirAllFiles() followed an off-origin redirect")
+	}
+
+	// The payload must not reach disk even if the error were mishandled.
+	if data, readErr := os.ReadFile(filepath.Join(localDir, "SKILL.md")); readErr == nil {
+		t.Errorf("off-origin payload written to disk: %q", data)
+	}
+}
+
 func TestSkillInstaller_InstallFromGitHub_WithToken(t *testing.T) {
 	tmpDir := t.TempDir()
 	skillsDir := filepath.Join(tmpDir, "skills")
