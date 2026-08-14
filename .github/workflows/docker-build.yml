@@ -43,6 +43,7 @@ jobs:
 
       # ── Login to Docker Hub ────────────────────
       - name: 🔑 Login to Docker Hub
+        if: vars.DOCKERHUB_REPOSITORY != ''
         uses: docker/login-action@v4
         with:
           registry: ${{ env.DOCKERHUB_REGISTRY }}
@@ -57,8 +58,13 @@ jobs:
           tag="${{ inputs.tag }}"
           echo "ghcr_tag=${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE_NAME }}:${tag}" >> "$GITHUB_OUTPUT"
           echo "ghcr_latest=${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
-          echo "dockerhub_tag=${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${tag}" >> "$GITHUB_OUTPUT"
-          echo "dockerhub_latest=${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
+
+          # Only emit Docker Hub tags when a repository is configured; otherwise
+          # they would render as "docker.io/:tag" and fail the push.
+          if [ -n "${{ env.DOCKERHUB_IMAGE_NAME }}" ]; then
+            echo "dockerhub_tag=${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_IMAGE_NAME }}:${tag}" >> "$GITHUB_OUTPUT"
+            echo "dockerhub_latest=${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
+          fi
 
       # ── Build & Push ──────────────────────────
       - name: 🚀 Build and push Docker image

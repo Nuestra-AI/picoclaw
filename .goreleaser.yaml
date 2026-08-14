@@ -108,8 +108,10 @@ dockers_v2:
     ids:
       - picoclaw
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
-      - 'docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}'
+      # Docker requires lowercase repository names; the owner may be mixed-case.
+      - "ghcr.io/{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
+      # Renders empty when DOCKERHUB_IMAGE_NAME is unset; empty names are ignored.
+      - '{{ with .Env.DOCKERHUB_IMAGE_NAME }}docker.io/{{ tolower . }}{{ end }}'
     tags:
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly{{ else }}{{ .Tag }}{{ end }}'
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly{{ else }}latest{{ end }}'
@@ -124,8 +126,10 @@ dockers_v2:
       - picoclaw
       - picoclaw-launcher
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
-      - 'docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}'
+      # Docker requires lowercase repository names; the owner may be mixed-case.
+      - "ghcr.io/{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
+      # Renders empty when DOCKERHUB_IMAGE_NAME is unset; empty names are ignored.
+      - '{{ with .Env.DOCKERHUB_IMAGE_NAME }}docker.io/{{ tolower . }}{{ end }}'
     tags:
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly-launcher{{ else }}{{ .Tag }}-launcher{{ end }}'
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly-launcher{{ else }}launcher{{ end }}'
