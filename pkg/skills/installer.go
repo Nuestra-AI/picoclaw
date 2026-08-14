@@ -491,6 +491,9 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 	}
 
 	for _, item := range items {
+		if !isSafeContentName(item.Name) {
+			return fmt.Errorf("unsafe entry name %q in repository contents", item.Name)
+		}
 		localPath := filepath.Join(localDir, item.Name)
 
 		switch item.Type {
@@ -498,12 +501,18 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 			if !shouldDownload(item.Name, isRoot) {
 				continue
 			}
+			if !si.isAllowedGitHubURL(item.DownloadURL) {
+				return fmt.Errorf("entry %q has an off-origin download URL", item.Name)
+			}
 			if err := si.downloadFile(ctx, item.DownloadURL, localPath); err != nil {
 				return fmt.Errorf("download %s: %w", item.Name, err)
 			}
 		case "dir":
 			if !isSkillDirectory(item.Name) {
 				continue
+			}
+			if !si.isAllowedGitHubURL(item.URL) {
+				return fmt.Errorf("entry %q has an off-origin contents URL", item.Name)
 			}
 			if err := si.getGithubDirAllFiles(ctx, item.URL, localPath, false); err != nil {
 				return err
@@ -573,6 +582,68 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 		return fmt.Errorf("failed to move downloaded file: %w", err)
 	}
 	return nil
+}
+
+// isSafeContentName reports whether a name from the GitHub Contents API is a
+// single path segment safe to join onto a local directory.
+//
+// The API returns bare names, but the response is remote input: a name of
+// "../../x" would survive filepath.Join, which cleans the result, and write
+// outside the skill directory. Everything reachable here is filtered by
+// shouldDownload or isSkillDirectory first, so this guards the one branch
+// that accepts arbitrary names -- files below a skill resource directory.
+//
+// Names carrying a volume ("C:foo", "C:") are rejected too. filepath.Join
+// happens to escape them rather than resetting the root, but that is an
+// implementation detail to lean on, and such a name is never legitimate.
+func isSafeContentName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	// Rejects "C:foo" on Windows; on other platforms VolumeName is always
+	// empty, so check for the colon directly to keep behavior identical.
+	if filepath.VolumeName(name) != "" || strings.Contains(name, ":") {
+		return false
+	}
+	return true
+}
+
+// isAllowedGitHubURL reports whether rawURL is an absolute http(s) URL served
+// by the same host as one of the configured GitHub endpoints.
+//
+// The Contents API supplies "url" and "download_url" per entry, and both are
+// used to make the next request. A GitHub Enterprise host -- or anything that
+// can answer for one -- could point those at an arbitrary origin, turning the
+// install walk into a request generator aimed at hosts the operator never
+// configured. Pinning to the configured hosts keeps a compromised or hostile
+// registry from redirecting the walk off-origin.
+func (si *SkillInstaller) isAllowedGitHubURL(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	if u.Host == "" {
+		return false
+	}
+	for _, base := range []string{si.githubAPIBaseURL, si.githubRawBaseURL, si.githubBaseURL} {
+		if base == "" {
+			continue
+		}
+		baseURL, err := url.Parse(base)
+		if err != nil || baseURL.Host == "" {
+			continue
+		}
+		if strings.EqualFold(u.Host, baseURL.Host) {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldDownload determines if a file should be downloaded

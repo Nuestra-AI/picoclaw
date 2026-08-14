@@ -398,7 +398,7 @@ They are independent, and one combination is a trap:
 
 | `find_skills` | `install_skill` | Effect |
 |---|---|---|
-| off | off | Default. No registry is constructed; the allowlist below is dormant. |
+| off | off | Shipped config. No registry is constructed; the allowlist below is dormant. |
 | on | off | Agent can browse but not install. Search results are filtered to the allowlist. |
 | off | on | **Avoid.** Discovery is hidden but installing is not blocked. |
 | on | on | Full self-service, bounded by the allowlist. |
@@ -411,6 +411,36 @@ install path. Before the allowlist existed, that meant any public GitHub repo.
 
 With both on, the allowlist is what bounds installs; with `install_skill`
 off, it is only defense in depth.
+
+### Intended posture for this deployment
+
+`config.example.json` ships both tools off, which is correct while skills are
+provisioned from `config_dir/skills/`. Note that this is a property of that
+file, not a built-in default: `pkg/config/defaults.go` has `find_skills`,
+`install_skill`, and both registries enabled, so a config that omits these
+keys gets them on. What holds such a deployment closed is the empty
+`param.allow` list, not the tool flags. Set all three explicitly rather than
+relying on omission.
+
+If tenant self-service is turned on, the intended configuration is:
+
+- **`install_skill: true`**, with `github` allowlisting only
+  `Nuestra-AI/skills`, **pinned to a tag** — `Nuestra-AI/skills@v1.4.0`.
+  Unpinned means whatever is on the default branch reaches every tenant on the
+  next install, and skills carry executable `scripts/`. Pinning makes shipping
+  a deliberate version bump rather than a side effect of pushing.
+- **`find_skills: false`.** It does not enumerate the allowlisted repo — it
+  queries the GitHub search API with the tenant's text and filters the results
+  afterward. With a single allowed repo that is a poor catalog and an outbound
+  path for tenant-derived queries, for no benefit: `install_skill` accepts a
+  slug directly, so listing the available skills in `AGENT.md` covers
+  discovery without a network call.
+- **`clawhub: enabled false`.** Clawhub slugs have no ref syntax, so entries
+  there cannot be pinned.
+
+Before enabling `install_skill`, note that the allowlist stops being defense
+in depth and becomes the control. See
+[NUESTRA_CUSTOMIZATIONS.md](../NUESTRA_CUSTOMIZATIONS.md) entry 12.
 
 ### Turning discovery on with an allowlist
 
