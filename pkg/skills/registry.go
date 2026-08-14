@@ -26,10 +26,14 @@ type SearchResult struct {
 
 // SkillMeta holds metadata about a skill from a registry.
 type SkillMeta struct {
-	Slug             string `json:"slug"`
-	DisplayName      string `json:"display_name"`
-	Summary          string `json:"summary"`
-	LatestVersion    string `json:"latest_version"`
+	Slug          string `json:"slug"`
+	DisplayName   string `json:"display_name"`
+	Summary       string `json:"summary"`
+	LatestVersion string `json:"latest_version"`
+	// ModerationKnown records that the registry returned a moderation
+	// verdict. The flags below are only meaningful when it is true: absent
+	// moderation would otherwise be indistinguishable from "clean".
+	ModerationKnown  bool   `json:"moderation_known"`
 	IsMalwareBlocked bool   `json:"is_malware_blocked"`
 	IsSuspicious     bool   `json:"is_suspicious"`
 	RegistryName     string `json:"registry_name"`
@@ -38,11 +42,44 @@ type SkillMeta struct {
 // InstallResult is returned by DownloadAndInstall to carry metadata
 // back to the caller for moderation and user messaging.
 type InstallResult struct {
-	Version           string
+	Version string
+	// ModeratesContent reports whether this registry supplies moderation
+	// verdicts at all. Registries that do not (GitHub) are not held to the
+	// checks below; for those that do, a missing verdict must fail closed
+	// rather than read as clean.
+	ModeratesContent  bool
+	ModerationKnown   bool
 	IsMalwareBlocked  bool
 	IsSuspicious      bool
 	Summary           string
 	MetadataAvailable bool
+}
+
+// ModerationBlocks reports whether an install must be rejected on moderation
+// grounds, and why.
+//
+// A registry that does not moderate (GitHub) is bounded by the install
+// allowlist instead and is never blocked here. A registry that does moderate
+// must produce a verdict: metadata that could not be fetched, or a response
+// carrying no moderation object, leaves the skill unvetted, and installing it
+// anyway would make one failed request enough to bypass the malware check.
+func ModerationBlocks(result *InstallResult) (bool, string) {
+	if result == nil {
+		return true, "returned no install result"
+	}
+	if !result.ModeratesContent {
+		return false, ""
+	}
+	if result.IsMalwareBlocked {
+		return true, "is flagged as malicious and cannot be installed"
+	}
+	if !result.MetadataAvailable {
+		return true, "could not be checked for malware (registry metadata unavailable)"
+	}
+	if !result.ModerationKnown {
+		return true, "could not be checked for malware (registry returned no moderation verdict)"
+	}
+	return false, ""
 }
 
 // RegistryProvider creates a registry instance from configuration.

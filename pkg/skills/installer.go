@@ -67,7 +67,7 @@ func NewSkillInstallerWithBaseURL(workspace, githubBaseURL, githubToken, proxy s
 		return nil, err
 	}
 
-	return &SkillInstaller{
+	si := &SkillInstaller{
 		workspace:        workspace,
 		client:           client,
 		githubBaseURL:    endpoints.WebBaseURL,
@@ -75,7 +75,23 @@ func NewSkillInstallerWithBaseURL(workspace, githubBaseURL, githubToken, proxy s
 		githubRawBaseURL: endpoints.RawBaseURL,
 		githubToken:      githubToken,
 		proxy:            proxy,
-	}, nil
+	}
+
+	// Validating only the pre-redirect URL would leave the origin pin in
+	// isAllowedGitHubURL trivially bypassable: a configured host could 302 to
+	// anywhere and the installer would write the response to disk as skill
+	// content. Re-check every hop.
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if !si.isAllowedGitHubURL(req.URL.String()) {
+			return fmt.Errorf("redirect to off-origin host %q", req.URL.Host)
+		}
+		return nil
+	}
+
+	return si, nil
 }
 
 type gitHubEndpoints struct {
@@ -491,6 +507,9 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 	}
 
 	for _, item := range items {
+		if !isSafeContentName(item.Name) {
+			return fmt.Errorf("unsafe entry name %q in repository contents", item.Name)
+		}
 		localPath := filepath.Join(localDir, item.Name)
 
 		switch item.Type {
@@ -498,12 +517,18 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 			if !shouldDownload(item.Name, isRoot) {
 				continue
 			}
+			if !si.isAllowedGitHubURL(item.DownloadURL) {
+				return fmt.Errorf("entry %q has an off-origin download URL", item.Name)
+			}
 			if err := si.downloadFile(ctx, item.DownloadURL, localPath); err != nil {
 				return fmt.Errorf("download %s: %w", item.Name, err)
 			}
 		case "dir":
 			if !isSkillDirectory(item.Name) {
 				continue
+			}
+			if !si.isAllowedGitHubURL(item.URL) {
+				return fmt.Errorf("entry %q has an off-origin contents URL", item.Name)
 			}
 			if err := si.getGithubDirAllFiles(ctx, item.URL, localPath, false); err != nil {
 				return err
@@ -573,6 +598,73 @@ func (si *SkillInstaller) downloadFile(ctx context.Context, url, localPath strin
 		return fmt.Errorf("failed to move downloaded file: %w", err)
 	}
 	return nil
+}
+
+// isSafeContentName reports whether a name from the GitHub Contents API is a
+// single path segment safe to join onto a local directory.
+//
+// The API returns bare names, but the response is remote input: a name of
+// "../../x" would survive filepath.Join, which cleans the result, and write
+// outside the skill directory. Everything reachable here is filtered by
+// shouldDownload or isSkillDirectory first, so this guards the one branch
+// that accepts arbitrary names -- files below a skill resource directory.
+//
+// Names carrying a volume ("C:foo", "C:") are rejected too. filepath.Join
+// happens to escape them rather than resetting the root, but that is an
+// implementation detail to lean on, and such a name is never legitimate.
+func isSafeContentName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	// Rejects "C:foo" on Windows; on other platforms VolumeName is always
+	// empty, so check for the colon directly to keep behavior identical.
+	if filepath.VolumeName(name) != "" || strings.Contains(name, ":") {
+		return false
+	}
+	return true
+}
+
+// isAllowedGitHubURL reports whether rawURL is an absolute http(s) URL served
+// by the same host as one of the configured GitHub endpoints.
+//
+// The Contents API supplies "url" and "download_url" per entry, and both are
+// used to make the next request. A GitHub Enterprise host -- or anything that
+// can answer for one -- could point those at an arbitrary origin, turning the
+// install walk into a request generator aimed at hosts the operator never
+// configured. Pinning to the configured hosts keeps a compromised or hostile
+// registry from redirecting the walk off-origin.
+//
+// Scheme is part of the origin, matching parseGitHubRefPathParts. Comparing
+// the host alone would let an entry keep the configured host but drop to
+// http, fetching skill content in the clear.
+func (si *SkillInstaller) isAllowedGitHubURL(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	if u.Host == "" {
+		return false
+	}
+	for _, base := range []string{si.githubAPIBaseURL, si.githubRawBaseURL, si.githubBaseURL} {
+		if base == "" {
+			continue
+		}
+		baseURL, err := url.Parse(base)
+		if err != nil || baseURL.Host == "" {
+			continue
+		}
+		if strings.EqualFold(u.Host, baseURL.Host) &&
+			strings.EqualFold(u.Scheme, baseURL.Scheme) {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldDownload determines if a file should be downloaded

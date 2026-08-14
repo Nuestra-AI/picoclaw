@@ -178,8 +178,13 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *To
 		return ErrorResult(fmt.Sprintf("failed to install %q: %v", slug, err))
 	}
 
-	// Moderation: block malware.
-	if result.IsMalwareBlocked {
+	// Moderation: block malware, and treat a missing verdict as a block.
+	//
+	// Only registries that actually moderate are held to this. For those
+	// that do, "no verdict" must not read as "clean": a metadata request an
+	// attacker can disrupt, or a response that simply omits the moderation
+	// object, would otherwise install unchecked.
+	if blocked, reason := skills.ModerationBlocks(result); blocked {
 		rmErr := os.RemoveAll(targetDir)
 		if rmErr != nil {
 			logger.ErrorCF("tool", "Failed to remove partial install",
@@ -190,7 +195,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *To
 				})
 		}
 		restorePreviousInstall()
-		return ErrorResult(fmt.Sprintf("skill %q is flagged as malicious and cannot be installed", slug))
+		return ErrorResult(fmt.Sprintf("skill %q %s", slug, reason))
 	}
 
 	if !workspaceHasValidInstalledSkill(t.workspace, dirName) {
@@ -242,10 +247,10 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *To
 	}
 
 	// Build result with moderation warnings.
+	// No "metadata unavailable" warning: a moderating registry now fails the
+	// install outright when the verdict is missing, and a non-moderating one
+	// never had a verdict to report.
 	var output string
-	if !result.MetadataAvailable {
-		output += fmt.Sprintf("Warning: safety metadata was not available for skill %q. Exercise caution.\n\n", slug)
-	}
 	if result.IsSuspicious {
 		output += fmt.Sprintf("⚠️ Warning: skill %q is flagged as suspicious (may contain risky patterns).\n\n", slug)
 	}

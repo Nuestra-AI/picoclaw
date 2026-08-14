@@ -362,12 +362,8 @@ func (h *Handler) handleInstallSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to install skill: %v", err), http.StatusBadGateway)
 		return
 	}
-	if result.IsMalwareBlocked {
-		http.Error(
-			w,
-			fmt.Sprintf("skill %q is flagged as malicious and cannot be installed", req.Slug),
-			http.StatusForbidden,
-		)
+	if blocked, reason := skills.ModerationBlocks(result); blocked {
+		http.Error(w, fmt.Sprintf("skill %q %s", req.Slug, reason), http.StatusForbidden)
 		return
 	}
 

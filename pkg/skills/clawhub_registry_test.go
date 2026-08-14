@@ -336,3 +336,93 @@ func createTestZip(t *testing.T, files map[string]string) []byte {
 	require.NoError(t, zw.Close())
 	return buf.Bytes()
 }
+
+// The moderation verdict is part of the install decision, so the result must
+// distinguish "registry said clean" from "we never got a verdict".
+func TestClawHubDownloadAndInstallReportsModerationState(t *testing.T) {
+	zipBuf := createTestZip(t, map[string]string{
+		"SKILL.md": "---\nname: test-skill\ndescription: A test\n---\nHello skill",
+	})
+
+	tests := []struct {
+		name                string
+		metaStatus          int
+		moderation          *clawhubModerationInfo
+		wantMetadata        bool
+		wantModerationKnown bool
+		wantBlocked         bool
+	}{
+		{
+			name:                "verdict present and clean",
+			metaStatus:          http.StatusOK,
+			moderation:          &clawhubModerationInfo{},
+			wantMetadata:        true,
+			wantModerationKnown: true,
+			wantBlocked:         false,
+		},
+		{
+			name:                "verdict present and blocked",
+			metaStatus:          http.StatusOK,
+			moderation:          &clawhubModerationInfo{IsMalwareBlocked: true},
+			wantMetadata:        true,
+			wantModerationKnown: true,
+			wantBlocked:         true,
+		},
+		{
+			name:                "moderation object omitted",
+			metaStatus:          http.StatusOK,
+			moderation:          nil,
+			wantMetadata:        true,
+			wantModerationKnown: false,
+			wantBlocked:         true,
+		},
+		{
+			name:                "metadata endpoint unavailable",
+			metaStatus:          http.StatusInternalServerError,
+			wantMetadata:        false,
+			wantModerationKnown: false,
+			wantBlocked:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/skills/test-skill":
+					if tt.metaStatus != http.StatusOK {
+						w.WriteHeader(tt.metaStatus)
+						return
+					}
+					json.NewEncoder(w).Encode(clawhubSkillResponse{
+						Slug:          "test-skill",
+						LatestVersion: &clawhubVersionInfo{Version: "1.0.0"},
+						Moderation:    tt.moderation,
+					})
+				case "/api/v1/download":
+					w.Header().Set("Content-Type", "application/zip")
+					w.Write(zipBuf)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			reg := newTestRegistry(srv.URL, "")
+			result, err := reg.DownloadAndInstall(
+				context.Background(),
+				"test-skill",
+				"1.0.0",
+				filepath.Join(t.TempDir(), "test-skill"),
+			)
+			require.NoError(t, err)
+
+			assert.True(t, result.ModeratesContent, "clawhub moderates content")
+			assert.Equal(t, tt.wantMetadata, result.MetadataAvailable)
+			assert.Equal(t, tt.wantModerationKnown, result.ModerationKnown)
+
+			blocked, _ := ModerationBlocks(result)
+			assert.Equal(t, tt.wantBlocked, blocked)
+		})
+	}
+}

@@ -3,11 +3,13 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -770,10 +772,6 @@ func TestGitHubContent_Struct(t *testing.T) {
 
 func TestSkillInstaller_GetGithubDirAllFiles(t *testing.T) {
 	tmpDir := t.TempDir()
-	installer, err := NewSkillInstaller(tmpDir, "", "")
-	if err != nil {
-		t.Fatalf("NewSkillInstaller() error = %v", err)
-	}
 
 	// Create a test server that mimics GitHub API
 	fileContent := "skill file content"
@@ -831,6 +829,13 @@ func TestSkillInstaller_GetGithubDirAllFiles(t *testing.T) {
 	serverURL = server.URL
 	defer server.Close()
 
+	// Configure the installer with the test server as its GitHub origin, so
+	// the URLs the handler returns are on the configured host.
+	installer, err := NewSkillInstallerWithBaseURL(tmpDir, server.URL, "", "")
+	if err != nil {
+		t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+	}
+
 	localDir := filepath.Join(tmpDir, "test-skill")
 
 	t.Run("download from GitHub API", func(t *testing.T) {
@@ -881,22 +886,241 @@ func TestSkillInstaller_GetGithubDirAllFiles(t *testing.T) {
 	})
 }
 
+// The Contents API returns bare names, but a hostile or compromised host can
+// return a traversing one. filepath.Join cleans the result, so an unguarded
+// join would write outside the skill directory.
+func TestGetGithubDirAllFiles_RejectsTraversingNames(t *testing.T) {
+	names := []string{
+		"../escaped.py", "..", ".", "a/b.py", `..\escaped.py`, "",
+		"C:foo.py", "C:", `\\host\share`,
+	}
+	for i, name := range names {
+		// Index-prefixed and quoted: raw candidates are empty or contain
+		// slashes, which t.Run would read as nested subtest names.
+		t.Run(fmt.Sprintf("%d_%q", i, name), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			var serverURL string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.Contains(r.URL.Path, "/api/scripts") {
+					// A traversing name below an accepted skill directory.
+					json.NewEncoder(w).Encode([]map[string]any{
+						{
+							"name":         name,
+							"type":         "file",
+							"download_url": serverURL + "/download",
+						},
+					})
+					return
+				}
+				if strings.Contains(r.URL.Path, "/download") {
+					w.Write([]byte("owned"))
+					return
+				}
+				json.NewEncoder(w).Encode([]map[string]any{
+					{"name": "scripts", "type": "dir", "url": serverURL + "/api/scripts"},
+				})
+			}))
+			serverURL = server.URL
+			defer server.Close()
+
+			installer, err := NewSkillInstallerWithBaseURL(tmpDir, server.URL, "", "")
+			if err != nil {
+				t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+			}
+			localDir := filepath.Join(tmpDir, "skill")
+			err = installer.getGithubDirAllFiles(context.Background(), server.URL+"/contents", localDir, true)
+			if err == nil {
+				t.Fatalf("getGithubDirAllFiles() accepted unsafe name %q", name)
+			}
+			// Pin the failure to the guard: any error would satisfy the
+			// check above, including an unrelated one.
+			if !strings.Contains(err.Error(), "unsafe entry name") {
+				t.Fatalf("error = %v, want an unsafe-entry-name rejection", err)
+			}
+
+			// Nothing may land outside the skill directory. Walking the
+			// whole temp dir covers every candidate; a single hardcoded
+			// filename would be vacuous for names like ".." or "C:".
+			walkErr := filepath.WalkDir(tmpDir, func(p string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					return nil
+				}
+				if !strings.HasPrefix(p, localDir+string(filepath.Separator)) {
+					t.Errorf("unsafe name %q wrote %q outside the skill directory", name, p)
+				}
+				return nil
+			})
+			if walkErr != nil {
+				t.Fatalf("walk failed: %v", walkErr)
+			}
+		})
+	}
+}
+
+// "url" and "download_url" are remote input. A hostile or compromised host
+// must not be able to steer the walk at an origin the operator never
+// configured.
+func TestGetGithubDirAllFiles_RejectsOffOriginURLs(t *testing.T) {
+	// Stands in for the attacker-chosen origin; it must never be contacted.
+	var offOriginHits int32
+	offOrigin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&offOriginHits, 1)
+		w.Write([]byte("pwned"))
+	}))
+	defer offOrigin.Close()
+
+	cases := []struct {
+		label string
+		items []map[string]any
+	}{
+		{"file download_url", []map[string]any{
+			{"name": "SKILL.md", "type": "file", "download_url": offOrigin.URL + "/x"},
+		}},
+		{"dir url", []map[string]any{
+			{"name": "scripts", "type": "dir", "url": offOrigin.URL + "/api"},
+		}},
+		{"non-http scheme", []map[string]any{
+			{"name": "SKILL.md", "type": "file", "download_url": "file:///etc/passwd"},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(tc.items)
+			}))
+			defer server.Close()
+
+			installer, err := NewSkillInstallerWithBaseURL(tmpDir, server.URL, "", "")
+			if err != nil {
+				t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+			}
+			err = installer.getGithubDirAllFiles(
+				context.Background(),
+				server.URL+"/contents",
+				filepath.Join(tmpDir, "skill"),
+				true,
+			)
+			if err == nil {
+				t.Fatal("getGithubDirAllFiles() accepted an off-origin URL")
+			}
+		})
+	}
+
+	if n := atomic.LoadInt32(&offOriginHits); n != 0 {
+		t.Errorf("off-origin server received %d request(s); want 0", n)
+	}
+}
+
+// Scheme is part of the origin: keeping the configured host but dropping to
+// http would fetch skill content in the clear.
+func TestIsAllowedGitHubURL(t *testing.T) {
+	installer, err := NewSkillInstallerWithBaseURL(t.TempDir(), "https://ghe.example.com", "", "")
+	if err != nil {
+		t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+	}
+
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{"https://ghe.example.com/api/v3/repos/x", true},
+		{"https://ghe.example.com/raw/x", true},
+		{"http://ghe.example.com/api/v3/repos/x", false}, // plaintext downgrade
+		{"https://evil.example.com/x", false},
+		{"file:///etc/passwd", false},
+		{"ftp://ghe.example.com/x", false},
+		{"", false},
+		{"//ghe.example.com/x", false}, // scheme-relative
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			if got := installer.isAllowedGitHubURL(tt.url); got != tt.want {
+				t.Errorf("isAllowedGitHubURL(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+// Pinning the pre-redirect URL is not enough on its own: a configured host
+// that answers with a 302 would otherwise pull skill content from anywhere.
+func TestGetGithubDirAllFiles_RejectsOffOriginRedirect(t *testing.T) {
+	offOrigin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("PAYLOAD FROM OFF-ORIGIN HOST"))
+	}))
+	defer offOrigin.Close()
+
+	tmpDir := t.TempDir()
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// On-origin URL that redirects off-origin.
+		if strings.Contains(r.URL.Path, "/download") {
+			http.Redirect(w, r, offOrigin.URL+"/payload", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"name": "SKILL.md", "type": "file", "download_url": serverURL + "/download"},
+		})
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	installer, err := NewSkillInstallerWithBaseURL(tmpDir, server.URL, "", "")
+	if err != nil {
+		t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
+	}
+
+	localDir := filepath.Join(tmpDir, "skill")
+	if err := installer.getGithubDirAllFiles(
+		context.Background(),
+		server.URL+"/contents",
+		localDir,
+		true,
+	); err == nil {
+		t.Fatal("getGithubDirAllFiles() followed an off-origin redirect")
+	}
+
+	// The payload must not reach disk even if the error were mishandled.
+	if data, readErr := os.ReadFile(filepath.Join(localDir, "SKILL.md")); readErr == nil {
+		t.Errorf("off-origin payload written to disk: %q", data)
+	}
+}
+
 func TestSkillInstaller_InstallFromGitHub_WithToken(t *testing.T) {
 	tmpDir := t.TempDir()
 	skillsDir := filepath.Join(tmpDir, "skills")
 	os.MkdirAll(skillsDir, 0o755)
 
+	const wantToken = "test-github-token"
 	var serverURL string
+	var apiAuth string
+	var sawAPICall bool
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Capture the authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "" {
-			tokenReceived := strings.TrimPrefix(authHeader, "Bearer ")
-			t.Fatalf("github token is %s", tokenReceived)
+		if strings.Contains(r.URL.Path, "/download/") {
+			w.Write([]byte("# Skill\n"))
+			return
 		}
+
+		sawAPICall = true
+		apiAuth = r.Header.Get("Authorization")
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+
+		// Default-branch lookup precedes the contents walk.
+		if !strings.Contains(r.URL.Path, "/contents") {
+			json.NewEncoder(w).Encode(map[string]any{"default_branch": "main"})
+			return
+		}
 
 		items := []map[string]any{
 			{
@@ -911,26 +1135,26 @@ func TestSkillInstaller_InstallFromGitHub_WithToken(t *testing.T) {
 	serverURL = server.URL
 	defer server.Close()
 
-	installer, err := NewSkillInstaller(tmpDir, "test-github-token", "")
+	// Point the installer at the test server, or it reaches api.github.com
+	// and the handler below never runs.
+	installer, err := NewSkillInstallerWithBaseURL(tmpDir, server.URL, wantToken, "")
 	if err != nil {
-		t.Fatalf("NewSkillInstaller() error = %v", err)
+		t.Fatalf("NewSkillInstallerWithBaseURL() error = %v", err)
 	}
 
-	// We need to test the token is passed - the actual install will fail
-	// because we're not fully mocking the download, but we can verify
-	// the token is sent in the request
-
-	// Use a simple context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// The install will fail because download URL isn't properly set up,
-	// but the token should be sent in the API request
-	_ = installer.InstallFromGitHub(ctx, "owner/repo")
+	if err := installer.InstallFromGitHub(ctx, "owner/repo"); err != nil {
+		t.Fatalf("InstallFromGitHub() error = %v", err)
+	}
 
-	// Note: We can't easily intercept the download request since it's a different URL,
-	// but the fact that the API request was made verifies the token flow
-	// In a real scenario, the token would be sent to both API and raw downloads
+	if !sawAPICall {
+		t.Fatal("test server never received the Contents API request")
+	}
+	if got, want := apiAuth, "Bearer "+wantToken; got != want {
+		t.Errorf("Authorization header = %q, want %q", got, want)
+	}
 }
 
 func TestSkillInstaller_ContextCancellation(t *testing.T) {
