@@ -253,6 +253,7 @@ type turnState struct {
 	tokenBudget      *atomic.Int64        // Shared token budget counter
 	lastFinishReason string               // Last LLM finish_reason
 	lastUsage        *providers.UsageInfo // Last LLM usage info
+	totalUsage       *providers.UsageInfo // Running total across every LLM call in the turn
 
 	// Back-reference to the owning AgentLoop (set for SubTurns only, used for hard abort cascade)
 	al *AgentLoop
@@ -891,6 +892,31 @@ func (ts *turnState) SetLastUsage(usage *providers.UsageInfo) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.lastUsage = usage
+	if usage == nil {
+		return
+	}
+	if ts.totalUsage == nil {
+		ts.totalUsage = &providers.UsageInfo{}
+	}
+	ts.totalUsage.PromptTokens += usage.PromptTokens
+	ts.totalUsage.CompletionTokens += usage.CompletionTokens
+	ts.totalUsage.TotalTokens += usage.TotalTokens
+}
+
+// GetTotalUsage returns the token usage accumulated across every LLM call made
+// during the turn. GetLastUsage reports only the most recent call, which
+// under-reports any turn that loops through tool calls.
+//
+// It returns nil when no call ever reported usage, so a provider that reports
+// nothing stays distinguishable from a turn that genuinely spent zero tokens.
+func (ts *turnState) GetTotalUsage() *providers.UsageInfo {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	if ts.totalUsage == nil {
+		return nil
+	}
+	total := *ts.totalUsage
+	return &total
 }
 
 // =============================================================================
